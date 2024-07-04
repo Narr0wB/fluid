@@ -5,7 +5,7 @@ use nalgebra::{Vector3, Unit};
 use vulkano::buffer::allocator::{SubbufferAllocator, SubbufferAllocatorCreateInfo};
 use vulkano::format::Format;
 use vulkano::descriptor_set::{allocator::StandardDescriptorSetAllocator, PersistentDescriptorSet, WriteDescriptorSet};
-use vulkano::device::{Device, DeviceExtensions, physical::PhysicalDeviceType, DeviceCreateInfo, QueueCreateInfo, QueueFlags};
+use vulkano::device::{Device, Features, DeviceExtensions, physical::PhysicalDeviceType, DeviceCreateInfo, QueueCreateInfo, QueueFlags};
 use vulkano::buffer::{Buffer, BufferContents, BufferCreateInfo, BufferUsage};
 use vulkano::command_buffer::{allocator::StandardCommandBufferAllocator, AutoCommandBufferBuilder, CommandBufferUsage, RenderPassBeginInfo, SubpassBeginInfo, SubpassContents};
 use vulkano::image::{view::ImageView, Image, ImageCreateInfo, ImageType, ImageUsage};
@@ -48,6 +48,66 @@ fn main() {
     )
     .unwrap();
 
+    // Create new device
+    let device_extensions = DeviceExtensions {
+        khr_swapchain: true,
+        ..DeviceExtensions::empty()
+    };
+
+    // Select physical device
+    let (phys_device, queue_family_index) = instance
+        .enumerate_physical_devices()
+        .unwrap()
+        .filter(|p| {
+            p.supported_extensions().contains(&device_extensions)
+        })
+        .filter_map(|p| {
+            p.queue_family_properties()
+                .iter()
+                .enumerate()
+                .position(|(i, q)|  {
+                    q.queue_flags.intersects(QueueFlags::GRAPHICS)
+                        // && p.surface_support(i as u32, &surface).unwrap_or(false)
+                })
+                .map(|i| (p, i as u32))
+        })
+        .min_by_key(|(p, _)| {
+            match p.properties().device_type {
+                PhysicalDeviceType::DiscreteGpu => 0,
+                PhysicalDeviceType::IntegratedGpu => 1,
+                PhysicalDeviceType::VirtualGpu => 2,
+                PhysicalDeviceType::Cpu => 3,
+                PhysicalDeviceType::Other => 4,
+                _ => 5,
+            }
+        })
+        .expect("Could not find a suitable device");
+
+    if cfg!(DEBUG) {
+        println!(
+            "Using device: {} (type: {:?})",
+            phys_device.properties().device_name,
+            phys_device.properties().device_type
+        );
+    }
+    
+    let (device, mut queues) = Device::new(
+        phys_device,
+        DeviceCreateInfo {
+            enabled_features: Features {
+                fill_mode_non_solid: true,
+                ..Default::default()
+            },
+            enabled_extensions: device_extensions,
+            queue_create_infos: vec![QueueCreateInfo{
+                queue_family_index,
+                ..Default::default()
+            }],
+            ..Default::default()
+        }
+    )
+    .unwrap();
+
     let mut camera = Camera::new(
         Vector3::new(2.0, 3.0, -3.0),                       // position
         Unit::new_normalize(Vector3::new(0.0, 0.0, 1.0)),   // orientation
@@ -57,8 +117,7 @@ fn main() {
 
     camera.set_target(Vector3::new(0.0, 0.0, 0.0));
 
-    let mut renderer = Renderer::init(instance, &event_loop, camera); 
-    
+    let mut renderer = Renderer::init(instance, &event_loop, camera, device.clone(), queues.next().unwrap().clone()); 
     
     let vertices: Vec<MVertex> = vec![
         MVertex {position: [0.0, 0.0, 0.0]}, MVertex {position: [0.0, 1.5, 0.0]},
@@ -117,10 +176,10 @@ fn main() {
             Event::RedrawEventsCleared => {
 
                 // previous_frame_end.as_mut().unwrap().cleanup_finished();
-
+                renderer.begin();
                 renderer.scene_camera.set_position(renderer.scene_camera.get_position() + Vector3::new(0.01, 0.0, 0.0));
                 renderer.draw(&mesh); 
-                
+                renderer.end();
 
                 // let new_vertices: Vec<MVertex> = vertices 
                 // .iter()

@@ -72,98 +72,42 @@ mod fs {
 }
 
 pub struct Renderer {
-    // Window and device specific stuff
+    // Window 
     instance: Arc<Instance>,
-    device: Arc<Device>,
     window: Arc<Window>,
-    swapchain: Arc<Swapchain>,
-    images: Vec<Arc<Image>>,
+    
+    // Device specific stuff
+    device: Arc<Device>,
+    render_queue: Arc<Queue>,
     
     // Camera and scene
     pub scene_camera: Camera,
+    descriptor_set: Arc<PersistentDescriptorSet>,
     camera_buffer: Arc<Subbuffer<[[f32; 4]; 4]>>,
-    
-    // Rendering specific stuff
-    render_pass: Arc<RenderPass>,
+
+    // Render buffers
     depth_buffer: Arc<Image>,
     framebuffers: Vec<Arc<Framebuffer>>,
+    images: Vec<Arc<Image>>,
+    acquired_image: u32,
+    swapchain: Arc<Swapchain>,
+
+    // Rendering specific stuff
+    render_pass: Arc<RenderPass>,
     viewport: Viewport,
     pipeline: Arc<GraphicsPipeline>,
-    descriptor_set: Arc<PersistentDescriptorSet>,
-    render_queue: Arc<Queue>,
     cmd_buffer_allocator: StandardCommandBufferAllocator
 }
 
 impl Renderer {
-    pub fn init(instance: Arc<Instance>, event_loop: &EventLoop<()>, mut camera: Camera) -> Self {
+    pub fn init(instance: Arc<Instance>, event_loop: &EventLoop<()>, mut camera: Camera, device: Arc<Device>, render_queue: Arc<Queue>) -> Self {
         // Create a new window and the window abstraction (surface)
         let window = Arc::new(WindowBuilder::new().build(&event_loop).unwrap());
         let surface = Surface::from_window(instance.clone(), window.clone()).unwrap();
         
-        let device_extensions = DeviceExtensions {
-            khr_swapchain: true,
-            ..DeviceExtensions::empty()
-        };
-
         // Set up the camera scene with the correct aspect ratio
         let (width, height): (u32, u32) = window.inner_size().into();
         camera.set_aspect_ratio((width / height) as f32);
-        
-        // Select physical device
-        let (phys_device, queue_family_index) = instance
-            .enumerate_physical_devices()
-            .unwrap()
-            .filter(|p| {
-                p.supported_extensions().contains(&device_extensions)
-            })
-            .filter_map(|p| {
-                p.queue_family_properties()
-                    .iter()
-                    .enumerate()
-                    .position(|(i, q)|  {
-                        q.queue_flags.intersects(QueueFlags::GRAPHICS)
-                            && p.surface_support(i as u32, &surface).unwrap_or(false)
-                    })
-                    .map(|i| (p, i as u32))
-            })
-            .min_by_key(|(p, _)| {
-                match p.properties().device_type {
-                    PhysicalDeviceType::DiscreteGpu => 0,
-                    PhysicalDeviceType::IntegratedGpu => 1,
-                    PhysicalDeviceType::VirtualGpu => 2,
-                    PhysicalDeviceType::Cpu => 3,
-                    PhysicalDeviceType::Other => 4,
-                    _ => 5,
-                }
-            })
-            .expect("eddu");
-
-        if cfg!(DEBUG) {
-            println!(
-                "Using device: {} (type: {:?})",
-                phys_device.properties().device_name,
-                phys_device.properties().device_type
-            );
-        }
-        
-        let (device, mut queues) = Device::new(
-            phys_device,
-            DeviceCreateInfo {
-                enabled_features: Features {
-                    fill_mode_non_solid: true,
-                    ..Default::default()
-                },
-                enabled_extensions: device_extensions,
-                queue_create_infos: vec![QueueCreateInfo{
-                    queue_family_index,
-                    ..Default::default()
-                }],
-                ..Default::default()
-            }
-        )
-        .unwrap();
-
-        let render_queue = queues.next().unwrap();
 
         let mem_allocator = Arc::new(StandardMemoryAllocator::new_default(device.clone()));
         
@@ -347,16 +291,14 @@ impl Renderer {
             instance,
             device,
             window,
-            
             scene_camera: camera,
-            
             render_pass,
             swapchain,
             images,
+            acquired_image: 0,
             depth_buffer,
             framebuffers,
             viewport,
-
             pipeline,
             render_queue,
             camera_buffer,
@@ -411,7 +353,7 @@ impl Renderer {
         };
     }
 
-    pub fn draw(&mut self, obj: &Mesh) {
+    pub fn begin(&mut self) {
         // Set up camera matrices and data
         let vp = self.scene_camera.vp().transpose();
 
@@ -423,18 +365,23 @@ impl Renderer {
         ];
 
         *self.camera_buffer.write().unwrap() = data;
-
         
         // Acquire the next image in the swapchain
         let (image_index, _, future) = acquire_next_image(self.swapchain.clone(), None).expect("eddu failed :(");
         
+        self.acquired_image = image_index;
+
+        sync::now(self.device.clone()).join(future);
+    }
+
+    pub fn draw(&mut self, obj: &Mesh) {
         // Create the command builder
         let mut cmd_builder = AutoCommandBufferBuilder::primary(
             &self.cmd_buffer_allocator,
             self.render_queue.queue_family_index(),
             CommandBufferUsage::OneTimeSubmit
         ).unwrap();
-        
+
         // Actually build the command
         cmd_builder
             .begin_render_pass(
@@ -444,7 +391,7 @@ impl Renderer {
                         Some(1f32.into())
                     ],
                     ..RenderPassBeginInfo::framebuffer(
-                        self.framebuffers[image_index as usize].clone()
+                        self.framebuffers[self.acquired_image as usize].clone()
                     )
                 },
                 SubpassBeginInfo {
@@ -468,14 +415,17 @@ impl Renderer {
         let cmd_buf = cmd_builder.build().unwrap();
 
         let super_future = sync::now(self.device.clone())
-            .join(future)
             .then_execute(self.render_queue.clone(), cmd_buf).unwrap()
+            .join();
+    }
+
+    pub fn end(&mut self) {
+        let _ = sync::now(self.device.clone())
             .then_swapchain_present(
-                self.render_queue.clone(),
-                SwapchainPresentInfo::swapchain_image_index(self.swapchain.clone(), image_index)
-            )
+                    self.render_queue.clone(),
+                    SwapchainPresentInfo::swapchain_image_index(self.swapchain.clone(), self.acquired_image)
+                )
             .then_signal_fence_and_flush()
             .expect("Could not send the command buffer to the GPU!");
-
-    } 
+    }
 }
