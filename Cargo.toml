@@ -1,0 +1,10 @@
+[package]
+name = "fluid-sim"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+nalgebra = "0.32.6"
+vulkano = "0.34.1"
+vulkano-shaders = "0.34.0"
+winit = "0.28"
