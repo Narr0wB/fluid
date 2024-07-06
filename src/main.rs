@@ -1,7 +1,7 @@
 #[allow(unused_imports)]
 
 use std::sync::Arc;
-use nalgebra::{Vector3, Unit};
+use nalgebra::{*};
 use vulkano::buffer::allocator::{SubbufferAllocator, SubbufferAllocatorCreateInfo};
 use vulkano::format::Format;
 use vulkano::descriptor_set::{allocator::StandardDescriptorSetAllocator, PersistentDescriptorSet, WriteDescriptorSet};
@@ -109,7 +109,7 @@ fn main() {
     .unwrap();
 
     let mut camera = Camera::new(
-        Vector3::new(2.0, 3.0, -3.0),                       // position
+        Vector3::new(2.0, 4.0, -4.0),                       // position
         Unit::new_normalize(Vector3::new(0.0, 0.0, 1.0)),   // orientation
         None,                                               // aspect_ratio
         50.0                                                // FOV
@@ -136,9 +136,10 @@ fn main() {
         
         0, 4, 1, 1, 5, 4
     ]; 
-
+    
+    let model_matrix = Matrix4::new_scaling(2.0);
      
-    let mesh = Mesh::new(renderer.get_memory_allocator().try_into().unwrap(), vertices, indices); 
+    let mesh = Mesh::new(renderer.get_memory_allocator().try_into().unwrap(), vertices, indices, model_matrix); 
 
 
     // let command_buffer_allocator = 
@@ -174,88 +175,10 @@ fn main() {
                 renderer.recreate_swapchain();
             }
             Event::RedrawEventsCleared => {
-
-                // previous_frame_end.as_mut().unwrap().cleanup_finished();
-                renderer.begin();
-                renderer.scene_camera.set_position(renderer.scene_camera.get_position() + Vector3::new(0.01, 0.0, 0.0));
+                renderer.scene_camera.set_position(renderer.scene_camera.get_position() + Vector3::new(0.0, 0.00, 0.0));
+                let first = renderer.begin();
                 renderer.draw(&mesh); 
-                renderer.end();
-
-                // let new_vertices: Vec<MVertex> = vertices 
-                // .iter()
-                // .map(|vertex| {
-                //     let mut new_vertex = MVertex::default();
-                //     new_vertex.color = vertex.color;
-                //     new_vertex.position[0] = vertex.position[0] * current_angle.cos() - vertex.position[1] * current_angle.sin();
-                //     new_vertex.position[1] = vertex.position[0] * current_angle.sin() + vertex.position[1] * current_angle.cos();
-                //
-                //     return new_vertex;
-                // })
-                // .collect();
-                //
-                // let time = ((SystemTime::now()
-                //     .duration_since(UNIX_EPOCH)
-                //     .expect("edduard")
-                //     .as_millis() % (2000.0f32 * std::f32::consts::PI) as u128) as f32) / 1000f32;
-
-                /* println!("{}", time); */
-
-                
-                
-                // builder
-                //     .begin_render_pass(
-                //         RenderPassBeginInfo {
-                //             clear_values: vec![
-                //                 Some([0.0, 0.0, 0.0, 1.0].into()),
-                //                 Some(1f32.into())
-                //             ],
-                //             ..RenderPassBeginInfo::framebuffer(
-                //                 framebuffers[image_index as usize].clone(),
-                //             )
-                //         },
-                //         SubpassBeginInfo {
-                //             contents: SubpassContents::Inline,
-                //             ..Default::default()
-                //         }
-                //     ).unwrap()
-                //     .set_viewport(0, [viewport.clone()].into_iter().collect()).unwrap()
-                //     .bind_pipeline_graphics(pipeline.clone()).unwrap()
-                //     .bind_descriptor_sets(
-                //         PipelineBindPoint::Graphics,
-                //         layout.clone(),
-                //         0,
-                //         vec![descriptor_set.clone(), descriptor_fragment_time.clone()]
-                //     )
-                //     .unwrap()
-                //     .bind_vertex_buffers(0, vertex_buffer_copy.clone()).unwrap()
-                //     .draw(vertex_buffer_copy.len() as u32, 1, 0, 0).unwrap()
-                //     .end_render_pass(Default::default())
-                //     .unwrap();
-                //
-                // let command_buffer = builder.build().unwrap();
-
-            //     let future = previous_frame_end
-            // .take()
-            //         .unwrap()
-            //         .join(acquire_future)
-            //         .then_execute(queue.clone(), command_buffer)
-            //         .unwrap()
-            //         .then_swapchain_present(
-            //             queue.clone(),
-            //             SwapchainPresentInfo::swapchain_image_index(swapchain.clone(), image_index),
-            //         )
-            //         .then_signal_fence_and_flush();
-            //
-            //     drop(vertex_buffer_copy);
-            //
-            //     match future.map_err(Validated::unwrap) {
-            //         Ok(future) => {
-            //             previous_frame_end = Some(sync::now(device.clone()).boxed());
-            //         },
-            //         Err(e) => {
-            //             panic!("Could not flush to future: {e}");
-            //         }
-            //     }
+                renderer.end(first);
             }
             _ => ()
         }

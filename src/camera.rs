@@ -1,6 +1,6 @@
 extern crate nalgebra as na;
 
-use na::{Vector3, Unit, RowVector4, Matrix4};
+use na::{Matrix4, Perspective3, RowVector4, Unit, Vector3};
 
 const UP: Vector3<f32> = Vector3::new(0.0, 1.0, 0.0);
 
@@ -15,7 +15,7 @@ pub struct Camera {
 
 impl Camera {
     pub fn new(position: Vector3<f32>, orientation: Unit<Vector3<f32>>, aspect_ratio: Option<f32>, fov: f32) -> Self {
-        Camera { position, orientation, aspect_ratio: aspect_ratio.unwrap_or(16.0 / 9.0), zfar: 200.0, znear: 1.0, fov }
+        Camera { position, orientation, aspect_ratio: aspect_ratio.unwrap_or(16.0 / 9.0), zfar: 100.0, znear: 1.0, fov }
     }
 
     pub fn set_target(&mut self, camera_target: Vector3<f32>) {
@@ -37,8 +37,8 @@ impl Camera {
         // println!("{:?} {:?}", right_vector, up_vector);
         
         let rotation = Matrix4::from_rows(&[
-            RowVector4::new(right_vector.x, right_vector.y, right_vector.z, 0.0),
-            RowVector4::new(up_vector.x, up_vector.y, up_vector.z, 0.0),
+            RowVector4::new(right_vector.x,     right_vector.y,     right_vector.z,     0.0),
+            RowVector4::new(up_vector.x,        up_vector.y,        up_vector.z,        0.0),
             RowVector4::new(self.orientation.x, self.orientation.y, self.orientation.z, 0.0),
             RowVector4::new(0.0, 0.0, 0.0, 1.0)
         ]);
@@ -66,6 +66,8 @@ impl Camera {
             RowVector4::new(0.0, 0.0, lambda, lambda2),
             RowVector4::new(0.0, 0.0, 1.0, 0.0)
         ]);
+
+        // let proj = Perspective3::new(1.0 / self.aspect_ratio, 3.14 / 12.0, 1.0, 1000.0).as_matrix().transpose().clone();
 
         return p;
     }
