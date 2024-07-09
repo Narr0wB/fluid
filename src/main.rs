@@ -20,6 +20,8 @@ use vulkano::swapchain::{acquire_next_image, Surface, Swapchain, SwapchainCreate
 use vulkano::sync::{self, GpuFuture};
 use vulkano::descriptor_set::layout::{DescriptorSetLayout, DescriptorType, DescriptorSetLayoutBinding};
 use vulkano::{Validated, VulkanError, VulkanLibrary};
+use winit::dpi::PhysicalPosition;
+use winit::event::{ElementState, KeyboardInput, MouseButton, MouseScrollDelta, ScanCode, VirtualKeyCode};
 
 mod mesh;
 mod camera;
@@ -108,6 +110,8 @@ fn main() {
     )
     .unwrap();
 
+    let memory_allocator = Arc::new(StandardMemoryAllocator::new_default(device.clone()));
+
     let mut camera = Camera::new(
         Vector3::new(2.0, 4.0, -4.0),                       // position
         Unit::new_normalize(Vector3::new(0.0, 0.0, 1.0)),   // orientation
@@ -139,7 +143,7 @@ fn main() {
     
     let model_matrix = Matrix4::new_scaling(2.0);
      
-    let mesh = Mesh::new(renderer.get_memory_allocator().try_into().unwrap(), vertices, indices, model_matrix); 
+    let mesh = Mesh::new(memory_allocator.clone(), vertices, indices, model_matrix); 
 
 
     // let command_buffer_allocator = 
@@ -151,6 +155,9 @@ fn main() {
     let mut start = Instant::now();
     let mut current_angle: f32 = 0.0;
     let rotation_speed: f32 = 2.0 * std::f32::consts::PI / 1000.0;
+    let mut last_position_cursor = None::<PhysicalPosition<f64>>;
+
+    let mut capturing_mouse_input = false;
 
     
     event_loop.run(move |event, _, control_flow| {
@@ -161,6 +168,68 @@ fn main() {
         current_angle += rotation_speed * ((frame_duration.as_millis() as f32 / 10.0) as f32);
 
         match event {
+            // Handle keyboard movement (WASD)
+            Event::WindowEvent {
+                event: WindowEvent::KeyboardInput{
+                    input: KeyboardInput{ virtual_keycode, state: ElementState::Pressed, .. },
+                    ..
+                },
+                ..
+            } => {
+                renderer.handle_keyboard_events(virtual_keycode); 
+            }
+            
+            // Handle mouse movement
+            Event::WindowEvent { 
+                event: WindowEvent::CursorMoved { position, .. }, 
+                ..
+            } => {
+                if !capturing_mouse_input { return; }
+
+                if let Some(prev) = last_position_cursor {
+                    let dxdy = PhysicalPosition{ x: position.x - prev.x, y: position.y - prev.y };
+                    
+                    renderer.handle_cursor_events(dxdy);
+                }
+                
+                last_position_cursor = Some(position);
+            }
+
+            // Handle mouse scroll wheel
+            Event::WindowEvent {
+                event: WindowEvent::MouseWheel { delta, .. },
+                ..
+            } => {
+                println!("{:?}", delta);
+                match delta {
+                    MouseScrollDelta::LineDelta(_, dw) => {
+                        renderer.handle_mwheel_events(dw);
+                    }
+
+                    _ => { return; }
+                }
+            }
+
+
+            Event::WindowEvent { 
+                event: WindowEvent::CursorLeft { .. }, 
+                ..
+            } => {
+                last_position_cursor = None;
+            }
+            Event::WindowEvent { 
+                event: WindowEvent::MouseInput { button: MouseButton::Left, state: ElementState::Pressed, .. }, 
+                ..
+            } => {
+                capturing_mouse_input = true;
+            }
+            Event::WindowEvent { 
+                event: WindowEvent::MouseInput { button: MouseButton::Left, state: ElementState::Released, .. }, 
+                ..
+            } => {
+                capturing_mouse_input = false;
+            }
+
             Event::WindowEvent { 
                 event: WindowEvent::CloseRequested,
                 ..

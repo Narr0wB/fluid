@@ -26,8 +26,32 @@ impl Camera {
         self.position = camera_position;
     }
 
+    pub fn set_orientation(&mut self, camera_orientation: Unit<Vector3<f32>>) {
+        if self.orientation.into_inner().cross(&camera_orientation.into_inner()).norm() < 0.0001 { return; }
+
+        self.orientation = camera_orientation;
+    }
+
+    pub fn set_fov(&mut self, fov: f32) {
+        if fov > 90.0 || fov < 0.0 { return; }
+
+        self.fov = fov;
+    }
+
     pub fn set_aspect_ratio(&mut self, aspect: f32) {
         self.aspect_ratio = aspect;
+    }
+
+    pub fn get_position(&self) -> Vector3<f32> {
+        self.position
+    }
+
+    pub fn get_orientation(&self) -> Unit<Vector3<f32>> {
+        self.orientation
+    }
+
+    pub fn get_fov(&self) -> f32 {
+        self.fov
     }
 
     pub fn view(&self) -> Matrix4<f32> {
@@ -74,9 +98,5 @@ impl Camera {
 
     pub fn vp(&self) -> Matrix4<f32> {
         return self.projection() * self.view();
-    }
-
-    pub fn get_position(&self) -> Vector3<f32> {
-        return self.position;
     }
 }

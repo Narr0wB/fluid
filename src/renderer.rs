@@ -25,13 +25,16 @@ use vulkano::swapchain::{acquire_next_image, Surface, Swapchain, SwapchainCreate
 use vulkano::sync::{self, GpuFuture};
 use vulkano::descriptor_set::layout::{DescriptorSetLayout, DescriptorType, DescriptorSetLayoutBinding};
 use vulkano::{Validated, VulkanError, VulkanLibrary};
+use winit::dpi::PhysicalPosition;
+use winit::event::{KeyboardInput, VirtualKeyCode};
 
 use std::any::Any;
+use std::convert::identity;
 use std::sync::Arc;
 
 use winit::{event::{Event, WindowEvent}, event_loop::{ControlFlow, EventLoop}, window::*};
 
-use nalgebra::{Vector3, Unit};
+use nalgebra::{*};
 
 use crate::camera::Camera;
 use crate::mesh::MVertex;
@@ -85,10 +88,14 @@ pub struct Renderer {
     
     // Camera and scene
     pub scene_camera: Camera,
+    move_sensitivity: f32,
+    mouse_sensitivity: f32,
+    fov_step: f32,
     descriptor_set: Arc<PersistentDescriptorSet>,
     mvp_buffer: Arc<Subbuffer<[f32]>>,
 
     // Render buffers
+    std_memory_allocator: Arc<StandardMemoryAllocator>,
     depth_buffer: Arc<Image>,
     framebuffers: Vec<Arc<Framebuffer>>,
     images: Vec<Arc<Image>>,
@@ -310,13 +317,104 @@ impl Renderer {
             render_queue,
             mvp_buffer,
             cmd_buffer_allocator,
+            std_memory_allocator: mem_allocator,
             descriptor_set,
-            secondary_cmd_buffers: vec![]
+            secondary_cmd_buffers: vec![],
+            move_sensitivity: 0.1,
+            mouse_sensitivity: 0.01,
+            fov_step: 5.0
         }
     }
 
-    pub fn get_memory_allocator(&self) -> Arc<StandardMemoryAllocator> {
-        return Arc::new(StandardMemoryAllocator::new_default(self.device.clone()));
+    pub fn handle_keyboard_events(&mut self, input: Option<VirtualKeyCode>) {
+        match input {
+
+            Some(winit::event::VirtualKeyCode::W) => {
+                let current_position = self.scene_camera.get_position();
+                let ahead = self.scene_camera.get_orientation();
+
+                self.scene_camera.set_position(current_position + (self.move_sensitivity * *ahead));
+            }
+
+            Some(winit::event::VirtualKeyCode::A) => {
+                let current_position = self.scene_camera.get_position();
+                let ahead = self.scene_camera.get_orientation();
+                let up = Vector3::new(0.0, 1.0, 0.0);
+
+                let right = up.cross(&ahead).normalize();
+
+                self.scene_camera.set_position(current_position - (self.move_sensitivity * right));
+            }
+
+            Some(winit::event::VirtualKeyCode::S) => {
+                let current_position = self.scene_camera.get_position();
+                let ahead = self.scene_camera.get_orientation();
+                
+                self.scene_camera.set_position(current_position - (self.move_sensitivity * *ahead)); 
+            }
+
+            Some(winit::event::VirtualKeyCode::D) => {
+                let current_position = self.scene_camera.get_position();
+                let ahead = self.scene_camera.get_orientation();
+                let up = Vector3::new(0.0, 1.0, 0.0);
+
+                let right = up.cross(&ahead).normalize();
+
+                self.scene_camera.set_position(current_position + (self.move_sensitivity * right));
+            }
+
+            Some(winit::event::VirtualKeyCode::Space) => {
+                let current_position = self.scene_camera.get_position();
+                let up = Vector3::new(0.0, 1.0, 0.0);
+
+                self.scene_camera.set_position(current_position + (self.move_sensitivity * up));
+            }
+
+            Some(winit::event::VirtualKeyCode::Z) => {
+                let current_position = self.scene_camera.get_position();
+                let up = Vector3::new(0.0, 1.0, 0.0);
+
+                self.scene_camera.set_position(current_position - (self.move_sensitivity * up));
+            }
+            
+            _ => {
+                return;
+            }
+        }
+    }
+
+    pub fn handle_cursor_events(&mut self, dxdy: PhysicalPosition<f64>) {
+        let ahead = self.scene_camera.get_orientation();
+        let up = Vector3::new(0.0, 1.0, 0.0);
+
+        let right = up.cross(&ahead).normalize();
+        let real_up = right.cross(&ahead).normalize();
+
+        let scaling_factor = (ahead.x.powf(2.0) + ahead.z.powf(2.0)).sqrt() + 0.01;
+       
+        let dx = if dxdy.x == 0.0 {
+                Vector3::new(0.0, 0.0, 0.0)
+            }
+            else { 
+                (right * -dxdy.x as f32).normalize()
+            };
+        
+        let dy = if dxdy.y == 0.0 {
+                Vector3::new(0.0, 0.0, 0.0)
+            }
+            else { 
+                (real_up * -dxdy.y as f32).normalize()
+            }; 
+
+        let change = self.mouse_sensitivity * scaling_factor * (dx + dy);
+
+        self.scene_camera.set_orientation(Unit::new_normalize(ahead.into_inner() + change));
+    }
+
+    pub fn handle_mwheel_events(&mut self, dw: f32) {
+        let current_fov = self.scene_camera.get_fov();
+
+        self.scene_camera.set_fov(current_fov - self.fov_step * dw);
     }
 
     pub fn recreate_swapchain(&mut self) {
@@ -329,7 +427,7 @@ impl Renderer {
             }).unwrap();
 
         let new_depth_buffer = Image::new(
-            self.get_memory_allocator(),
+            self.std_memory_allocator.clone(),
             ImageCreateInfo {
                 image_type: ImageType::Dim2d,
                 format: Format::D16_UNORM,
@@ -377,7 +475,24 @@ impl Renderer {
     }
 
     pub fn begin(&mut self) -> Box<dyn GpuFuture> {
+        // Set up camera matrices and data
+        let vp = self.scene_camera.vp();
+        let model_identity = Matrix4::<f32>::identity();
         
+        // let data = [
+        //     [vp[(0, 0)], vp[(1, 0)], vp[(2, 0)], vp[(3, 0)]],
+        //     [vp[(0, 1)], vp[(1, 1)], vp[(2, 1)], vp[(3, 1)]],
+        //     [vp[(0, 2)], vp[(1, 2)], vp[(2, 2)], vp[(3, 2)]],
+        //     [vp[(0, 3)], vp[(1, 3)], vp[(2, 3)], vp[(3, 3)]],
+        //
+        //     [model[(0, 0)], model[(1, 0)], model[(2, 0)], model[(3, 0)]],
+        //     [model[(0, 1)], model[(1, 1)], model[(2, 1)], model[(3, 1)]],
+        //     [model[(0, 2)], model[(1, 2)], model[(2, 2)], model[(3, 2)]],
+        //     [model[(0, 3)], model[(1, 3)], model[(2, 3)], model[(3, 3)]],
+        // ];
+        
+        self.mvp_buffer.write().unwrap()[0..vp.len()].copy_from_slice(vp.as_slice());
+        self.mvp_buffer.write().unwrap()[vp.len()..vp.len()+model_identity.len()].copy_from_slice(model_identity.as_slice());
         
         // Acquire the next image in the swapchain
         let (image_index, _, future) = acquire_next_image(self.swapchain.clone(), None).expect("eddu failed :(");
@@ -422,23 +537,10 @@ impl Renderer {
     }
 
     pub fn draw(&mut self, obj: &Mesh) {
-        // Set up camera matrices and data
-        let vp = self.scene_camera.vp();
         let model = obj.get_model_matrix();
+        let mvp_buffer_offset = 4 * 4;
 
-        let data = [
-            [vp[(0, 0)], vp[(1, 0)], vp[(2, 0)], vp[(3, 0)]],
-            [vp[(0, 1)], vp[(1, 1)], vp[(2, 1)], vp[(3, 1)]],
-            [vp[(0, 2)], vp[(1, 2)], vp[(2, 2)], vp[(3, 2)]],
-            [vp[(0, 3)], vp[(1, 3)], vp[(2, 3)], vp[(3, 3)]],
-
-            [model[(0, 0)], model[(1, 0)], model[(2, 0)], model[(3, 0)]],
-            [model[(0, 1)], model[(1, 1)], model[(2, 1)], model[(3, 1)]],
-            [model[(0, 2)], model[(1, 2)], model[(2, 2)], model[(3, 2)]],
-            [model[(0, 3)], model[(1, 3)], model[(2, 3)], model[(3, 3)]],
-        ];
-
-        *self.mvp_buffer.write().unwrap() = vp.as_slice();
+        self.mvp_buffer.write().unwrap()[mvp_buffer_offset..mvp_buffer_offset + model.len()].copy_from_slice(model.as_slice());
 
         // Create the command builder
         let mut cmd_builder = AutoCommandBufferBuilder::secondary(
