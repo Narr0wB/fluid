@@ -3,6 +3,7 @@
 use vulkano::buffer::allocator::{SubbufferAllocator, SubbufferAllocatorCreateInfo};
 use vulkano::command_buffer::allocator::StandardCommandBufferAllocatorCreateInfo;
 use vulkano::command_buffer::{CommandBufferInheritanceRenderPassType, PrimaryAutoCommandBuffer, SecondaryAutoCommandBuffer, SecondaryCommandBufferAbstract};
+use vulkano::descriptor_set::allocator::StandardDescriptorSetAlloc;
 use vulkano::descriptor_set::DescriptorSet;
 use vulkano::device::Queue;
 use vulkano::format::Format;
@@ -15,6 +16,7 @@ use vulkano::image::{view::ImageView, Image, ImageCreateInfo, ImageType, ImageUs
 use vulkano::memory::allocator::{AllocationCreateInfo, MemoryTypeFilter, StandardMemoryAllocator};
 use vulkano::instance::{Instance, InstanceCreateFlags, InstanceCreateInfo};
 use vulkano::pipeline::graphics::color_blend::ColorComponents;
+use vulkano::pipeline::graphics::input_assembly::PrimitiveTopology;
 use vulkano::pipeline::graphics::rasterization::PolygonMode;
 use vulkano::pipeline::graphics::{color_blend::{ColorBlendAttachmentState, ColorBlendState}, input_assembly::InputAssemblyState, multisample::MultisampleState, rasterization::RasterizationState,
     vertex_input::{Vertex, VertexDefinition}, viewport::{Viewport, ViewportState}, GraphicsPipelineCreateInfo, depth_stencil::{DepthState, DepthStencilState}};
@@ -37,8 +39,8 @@ use winit::{event::{Event, WindowEvent}, event_loop::{ControlFlow, EventLoop}, w
 use nalgebra::{*};
 
 use crate::camera::Camera;
-use crate::mesh::MVertex;
-use crate::mesh::Mesh;
+use crate::mesh::{Mesh, MVertex};
+use crate::fluid::Particle;
 
 
 mod vs {
@@ -48,14 +50,14 @@ mod vs {
             #version 450
 
             layout(set = 0, binding = 0) uniform view {
-                mat4 model;
                 mat4 vp;
+                mat4 model;
             } v;
             
             layout(location = 0) in vec3 position;
             
             void main() {
-                gl_Position = v.model * v.vp * vec4(position, 1.0);
+                gl_Position = v.vp * v.model * vec4(position, 1.0);
             }
         "
     }
@@ -72,6 +74,75 @@ mod fs {
             void main() {
                 vec4 modified_color = vec4(1.0);
                 f_color = modified_color;
+            }
+        "
+    }
+}
+
+mod pvs {
+    vulkano_shaders::shader! {
+        ty: "vertex",
+        src: "
+            #version 450
+
+            struct Particle {
+                mat4 model;
+                vec4 color;
+            };
+            
+            layout(set = 0, binding = 0) uniform view {
+                mat4 vp;
+                mat4 model;
+            } v;
+ 
+            layout(set = 0, binding = 1) buffer particles {
+                Particle particles[];
+            } p;
+            
+            layout(location = 0) in vec3 position;
+            layout(location = 0) out vec4 param;
+
+            void main() {
+                gl_Position = v.vp * p.particles[gl_InstanceIndex].model * vec4(position, 1.0);
+                param = p.particles[gl_InstanceIndex].color;
+            }
+        "
+    }
+}
+
+mod pfs {
+    vulkano_shaders::shader! {
+        ty: "fragment",
+        src: "
+            #version 450
+
+            layout(location = 0) out vec4 frag_color;
+            layout(location = 0) in vec4 param;
+
+            vec3 blue   = vec3(0.,0.114,1.);
+            vec3 teal   = vec3(0.,1.,0.612);
+            vec3 yellow = vec3(0.953,1.,0.);
+            vec3 red    = vec3(1.,0.,0.);
+
+            vec3 grad(float t) {
+                t = clamp(t, 0.0, 1.0);
+
+                float segment1 = 0.54;
+                float segment2 = 0.22;
+                float segment3 = 0.24;
+
+                if (t < segment1) {
+                    return mix(blue, teal, t / segment1);
+                }
+                else if (t < segment1 + segment2) {
+                    return mix(teal, yellow, (t - segment1) / segment2);
+                }
+                
+                return mix(yellow, red, (t - (segment1 + segment2)) / segment3);
+            }
+
+            void main() {
+                frag_color = vec4(grad(param.x), 1.0);
             }
         "
     }
@@ -105,7 +176,8 @@ pub struct Renderer {
     // Rendering specific stuff
     render_pass: Arc<RenderPass>,
     viewport: Viewport,
-    pipeline: Arc<GraphicsPipeline>,
+    obj_pipeline: Arc<GraphicsPipeline>,
+    particle_pipeline: Arc<GraphicsPipeline>,
 
     // Command buffer stuff
     cmd_buffer_allocator: StandardCommandBufferAllocator,
@@ -237,12 +309,12 @@ impl Renderer {
         color_attachment_state.color_write_mask = ColorComponents::all();
         color_attachment_state.blend = None;
 
-        let pipeline = GraphicsPipeline::new(
+        let obj_pipeline = GraphicsPipeline::new(
             device.clone(),
             None,
             GraphicsPipelineCreateInfo {
                 stages: shader_stages,
-                vertex_input_state: Some(vertex_input_state),
+                vertex_input_state: Some(vertex_input_state.clone()),
                 input_assembly_state: Some(InputAssemblyState::default()),
                 viewport_state: Some(ViewportState::default()),
                 rasterization_state: Some(rasterizer_state), 
@@ -253,11 +325,47 @@ impl Renderer {
                 multisample_state: Some(MultisampleState::default()),
                 color_blend_state: Some(ColorBlendState::with_attachment_states(
                     Subpass::from(render_pass.clone(), 0).unwrap().num_color_attachments(), 
-                    color_attachment_state 
+                    color_attachment_state.clone() 
                 )),
                 dynamic_state: [DynamicState::Viewport].into_iter().collect(),
                 subpass: Some(Subpass::from(render_pass.clone(), 0).unwrap().into()),
                 ..GraphicsPipelineCreateInfo::layout(layout.clone())
+            }
+        ).unwrap();
+
+        let pvs = pvs::load(device.clone()).unwrap().entry_point("main").unwrap();
+        let pfs = pfs::load(device.clone()).unwrap().entry_point("main").unwrap();
+        
+        let p_shader_stages = vec![
+            PipelineShaderStageCreateInfo::new(pvs),
+            PipelineShaderStageCreateInfo::new(pfs)
+        ].into();
+
+        let p_layout = PipelineLayout::new(
+            device.clone(),
+            PipelineDescriptorSetLayoutCreateInfo::from_stages(&p_shader_stages)
+                .into_pipeline_layout_create_info(device.clone())
+                .unwrap()
+        ).unwrap();
+
+        let particle_pipeline = GraphicsPipeline::new(
+            device.clone(),
+            None,
+            GraphicsPipelineCreateInfo {
+                stages: p_shader_stages,
+                vertex_input_state: Some(vertex_input_state),
+                input_assembly_state: Some(InputAssemblyState { topology: PrimitiveTopology::TriangleList, ..InputAssemblyState::default() }),
+                viewport_state: Some(ViewportState::default()),
+                rasterization_state: Some(RasterizationState { polygon_mode: PolygonMode::Line, ..Default::default() }),
+                depth_stencil_state: Some(DepthStencilState {depth: Some(DepthState::simple()), ..Default::default()}),
+                multisample_state: Some(MultisampleState::default()),
+                color_blend_state: Some(ColorBlendState::with_attachment_states(
+                    Subpass::from(render_pass.clone(), 0).unwrap().num_color_attachments(), 
+                    color_attachment_state
+                )),
+                dynamic_state: [DynamicState::Viewport].into_iter().collect(),
+                subpass: Some(Subpass::from(render_pass.clone(), 0).unwrap().into()),
+                ..GraphicsPipelineCreateInfo::layout(p_layout.clone())
             }
         ).unwrap();
 
@@ -272,7 +380,7 @@ impl Renderer {
                     memory_type_filter: MemoryTypeFilter::PREFER_DEVICE | MemoryTypeFilter::HOST_SEQUENTIAL_WRITE,
                     ..Default::default()
                 },
-                4 * 4 * 2 * std::mem::size_of::<f32>() as u64 
+                4 * 4 * 2 
             ).unwrap()
         );
 
@@ -280,11 +388,13 @@ impl Renderer {
             StandardDescriptorSetAllocator::new(device.clone(), Default::default());
 
         let vs_layout = layout.set_layouts().get(0).unwrap();
-
+    
         let descriptor_set = PersistentDescriptorSet::new(
             &descriptor_set_allocator,
             vs_layout.clone(),
-            [WriteDescriptorSet::buffer(0, (*mvp_buffer).clone())],
+            [
+                WriteDescriptorSet::buffer(0, (*mvp_buffer).clone())
+            ],
             []
         ).unwrap();
 
@@ -313,7 +423,8 @@ impl Renderer {
             depth_buffer,
             framebuffers,
             viewport,
-            pipeline,
+            obj_pipeline,
+            particle_pipeline,
             render_queue,
             mvp_buffer,
             cmd_buffer_allocator,
@@ -479,18 +590,6 @@ impl Renderer {
         let vp = self.scene_camera.vp();
         let model_identity = Matrix4::<f32>::identity();
         
-        // let data = [
-        //     [vp[(0, 0)], vp[(1, 0)], vp[(2, 0)], vp[(3, 0)]],
-        //     [vp[(0, 1)], vp[(1, 1)], vp[(2, 1)], vp[(3, 1)]],
-        //     [vp[(0, 2)], vp[(1, 2)], vp[(2, 2)], vp[(3, 2)]],
-        //     [vp[(0, 3)], vp[(1, 3)], vp[(2, 3)], vp[(3, 3)]],
-        //
-        //     [model[(0, 0)], model[(1, 0)], model[(2, 0)], model[(3, 0)]],
-        //     [model[(0, 1)], model[(1, 1)], model[(2, 1)], model[(3, 1)]],
-        //     [model[(0, 2)], model[(1, 2)], model[(2, 2)], model[(3, 2)]],
-        //     [model[(0, 3)], model[(1, 3)], model[(2, 3)], model[(3, 3)]],
-        // ];
-        
         self.mvp_buffer.write().unwrap()[0..vp.len()].copy_from_slice(vp.as_slice());
         self.mvp_buffer.write().unwrap()[vp.len()..vp.len()+model_identity.len()].copy_from_slice(model_identity.as_slice());
         
@@ -502,45 +601,21 @@ impl Renderer {
         Box::new(future)
     }
 
-    pub fn draw_particles(&mut self, particle: Vec<MVertex>) {
-        // let mut cmd_builder = AutoCommandBufferBuilder::primary(
-        //     &self.cmd_buffer_allocator,
-        //     self.render_queue.queue_family_index(),
-        //     CommandBufferUsage::OneTimeSubmit
-        // ).unwrap();
-        //
-        // cmd_builder
-        //     .begin_render_pass(
-        //         RenderPassBeginInfo {
-        //             clear_values: vec![
-        //                 Some([0.0, 0.0, 0.0, 1.0].into()),
-        //                 Some(1f32.into())
-        //             ],
-        //             ..RenderPassBeginInfo::framebuffer(
-        //                 self.framebuffers[self.acquired_image as usize].clone()
-        //             )
-        //         },
-        //         SubpassBeginInfo {
-        //             contents: SubpassContents::Inline,
-        //             ..Default::default()
-        //         }
-        //     ).unwrap()
-        //     .set_viewport(0, [self.viewport.clone()].into_iter().collect()).unwrap();
-        //
-        // let cmd_buf = cmd_builder.build().unwrap();
-        //
-        // let super_future = prev_future
-        //     .then_execute(self.render_queue.clone(), cmd_buf).unwrap()
-        //     .then_signal_fence_and_flush().unwrap();
-        //
-        // Box::new(super_future)
-    }
+    pub fn draw_particles(&mut self, sphere: &Mesh, particles: &Subbuffer<[f32]>) {
+        let descriptor_set_allocator = 
+            StandardDescriptorSetAllocator::new(self.device.clone(), Default::default());
 
-    pub fn draw(&mut self, obj: &Mesh) {
-        let model = obj.get_model_matrix();
-        let mvp_buffer_offset = 4 * 4;
+        let pvs_layout = self.particle_pipeline.layout().set_layouts().get(0).unwrap();
 
-        self.mvp_buffer.write().unwrap()[mvp_buffer_offset..mvp_buffer_offset + model.len()].copy_from_slice(model.as_slice());
+        let p_descriptor_set = PersistentDescriptorSet::new(
+            &descriptor_set_allocator,
+            pvs_layout.clone(),
+            [
+                WriteDescriptorSet::buffer(0, (*self.mvp_buffer).clone()),
+                WriteDescriptorSet::buffer(1, (*particles).clone())
+            ],
+            []
+        ).unwrap();
 
         // Create the command builder
         let mut cmd_builder = AutoCommandBufferBuilder::secondary(
@@ -556,16 +631,52 @@ impl Renderer {
         // Record commands
         cmd_builder
             .set_viewport(0, [self.viewport.clone()].into_iter().collect()).unwrap()
-            .bind_pipeline_graphics(self.pipeline.clone()).unwrap()
+            .bind_pipeline_graphics(self.particle_pipeline.clone()).unwrap()
             .bind_descriptor_sets(
                 PipelineBindPoint::Graphics,
-                self.pipeline.layout().clone(),
+                self.particle_pipeline.layout().clone(),
+                0,
+                vec![p_descriptor_set.clone()]
+            ).unwrap()
+            .bind_vertex_buffers(0, sphere.get_vertex_buffer().clone()).unwrap()
+            .bind_index_buffer(sphere.get_index_buffer().clone()).unwrap()
+            .draw_indexed(sphere.len() as u32, particles.len() as u32, 0, 0, 0).unwrap();
+
+        let cmd_buf = cmd_builder.build().unwrap();
+        
+        self.secondary_cmd_buffers.push(cmd_buf);
+    }
+
+    pub fn draw(&mut self, obj: &Mesh) {
+        let model = obj.get_model_matrix();
+        let vp_buffer_offset = 4 * 4;
+
+        self.mvp_buffer.write().unwrap()[vp_buffer_offset..vp_buffer_offset + model.len()].copy_from_slice(model.as_slice());
+
+        // Create the command builder
+        let mut cmd_builder = AutoCommandBufferBuilder::secondary(
+            &self.cmd_buffer_allocator,
+            self.render_queue.queue_family_index(),
+            CommandBufferUsage::OneTimeSubmit,
+            CommandBufferInheritanceInfo {
+                render_pass: Some(CommandBufferInheritanceRenderPassType::BeginRenderPass( (Subpass::from(self.render_pass.clone(), 0).unwrap()).into() )),
+                ..Default::default()
+            }
+        ).unwrap();
+
+        // Record commands
+        cmd_builder
+            .set_viewport(0, [self.viewport.clone()].into_iter().collect()).unwrap()
+            .bind_pipeline_graphics(self.obj_pipeline.clone()).unwrap()
+            .bind_descriptor_sets(
+                PipelineBindPoint::Graphics,
+                self.obj_pipeline.layout().clone(),
                 0,
                 vec![self.descriptor_set.clone()]
             ).unwrap()
             .bind_vertex_buffers(0, obj.get_vertex_buffer().clone()).unwrap()
             .bind_index_buffer(obj.get_index_buffer().clone()).unwrap()
-            .draw_indexed(obj.get_index_buffer().len() as u32, 1, 0, 0, 0).unwrap();
+            .draw_indexed(obj.len() as u32, 1, 0, 0, 0).unwrap();
             
 
         let cmd_buf = cmd_builder.build().unwrap();
@@ -584,7 +695,7 @@ impl Renderer {
             .begin_render_pass(
                 RenderPassBeginInfo {
                     clear_values: vec![
-                        Some([0.0, 0.0, 0.0, 1.0].into()),
+                        Some([0.749,0.749,0.749, 1.0].into()),
                         Some(1f32.into())
                     ],
                     ..RenderPassBeginInfo::framebuffer(

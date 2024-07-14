@@ -1,13 +1,14 @@
 #[allow(unused_imports)]
 
 use std::sync::Arc;
-use nalgebra::{*};
+use fluid::{BoundingBox, Fluid, PARTICLE_RADIUS};
 use vulkano::buffer::allocator::{SubbufferAllocator, SubbufferAllocatorCreateInfo};
 use vulkano::format::Format;
 use vulkano::descriptor_set::{allocator::StandardDescriptorSetAllocator, PersistentDescriptorSet, WriteDescriptorSet};
 use vulkano::device::{Device, Features, DeviceExtensions, physical::PhysicalDeviceType, DeviceCreateInfo, QueueCreateInfo, QueueFlags};
 use vulkano::buffer::{Buffer, BufferContents, BufferCreateInfo, BufferUsage};
 use vulkano::command_buffer::{allocator::StandardCommandBufferAllocator, AutoCommandBufferBuilder, CommandBufferUsage, RenderPassBeginInfo, SubpassBeginInfo, SubpassContents};
+use vulkano::half::vec::HalfFloatVecExt;
 use vulkano::image::{view::ImageView, Image, ImageCreateInfo, ImageType, ImageUsage};
 use vulkano::memory::allocator::{AllocationCreateInfo, MemoryTypeFilter, StandardMemoryAllocator};
 use vulkano::instance::{Instance, InstanceCreateFlags, InstanceCreateInfo};
@@ -19,16 +20,21 @@ use vulkano::render_pass::{Framebuffer, FramebufferCreateInfo, Subpass};
 use vulkano::swapchain::{acquire_next_image, Surface, Swapchain, SwapchainCreateInfo, SwapchainPresentInfo};
 use vulkano::sync::{self, GpuFuture};
 use vulkano::descriptor_set::layout::{DescriptorSetLayout, DescriptorType, DescriptorSetLayoutBinding};
-use vulkano::{Validated, VulkanError, VulkanLibrary};
+use vulkano::{memory, Validated, VulkanError, VulkanLibrary};
 use winit::dpi::PhysicalPosition;
 use winit::event::{ElementState, KeyboardInput, MouseButton, MouseScrollDelta, ScanCode, VirtualKeyCode};
+
+use nalgebra::{*};
 
 mod mesh;
 mod camera;
 mod renderer;
+mod fluid;
+
 use crate::camera::Camera;
 use crate::renderer::Renderer;
-use crate::mesh::{MVertex, Mesh};
+use crate::mesh::{*};
+use crate::fluid::Particle;
 
 use winit::{event::{Event, WindowEvent}, event_loop::{ControlFlow, EventLoop}, window::*};
 
@@ -141,16 +147,9 @@ fn main() {
         0, 4, 1, 1, 5, 4
     ]; 
     
-    let model_matrix = Matrix4::new_scaling(2.0);
+    let model_matrix = Matrix4::new_scaling(3.0);
      
     let mesh = Mesh::new(memory_allocator.clone(), vertices, indices, model_matrix); 
-
-
-    // let command_buffer_allocator = 
-    //     StandardCommandBufferAllocator::new(device.clone(), Default::default());
-    //
-    // let mut recreate_swapchain = false;
-    // let mut previous_frame_end = Some(sync::now(device.clone()).boxed());
 
     let mut start = Instant::now();
     let mut current_angle: f32 = 0.0;
@@ -158,8 +157,41 @@ fn main() {
     let mut last_position_cursor = None::<PhysicalPosition<f64>>;
 
     let mut capturing_mouse_input = false;
+    let sphere = create_sphere(PARTICLE_RADIUS, Vector3::new(0.0, 0.0, 0.0), 10, memory_allocator.clone());
 
+    let particles = vec![Particle::new(Vector3::new(0.5, 5.0, 2.0), None), Particle::new(Vector3::new(1.0, 4.0, 1.0), None), Particle::new(Vector3::new(0.7, 6.0, 0.5), None), Particle::new(Vector3::new(1.0, 8.0, 2.5), None), Particle::new(Vector3::new(1.5, 3.0, 1.5), None)];
     
+    let mut fluid = Fluid::new(particles, 0.0, memory_allocator.clone());
+    // Create the instances model matrices
+    // let mut instance_matrices_data = vec![];
+
+    // particles
+    //     .iter()
+    //     .for_each(|p| {
+    //         instance_matrices_data.extend_from_slice(Matrix4::new_translation(&p.position).as_slice());
+    //         instance_matrices_data.push(p.velocity.norm() as f32 / 10.0);
+    //         instance_matrices_data.push(p.velocity.norm() as f32 / 10.0);
+    //         instance_matrices_data.push(p.velocity.norm() as f32 / 10.0);
+    //         instance_matrices_data.push(p.velocity.norm() as f32 / 10.0);
+    //     });
+    //
+    // // Put the model matrices in a UBO
+    // let mut matrices_buffer = Arc::new(
+    //     Buffer::from_iter(
+    //         memory_allocator.clone(),
+    //         BufferCreateInfo {
+    //             usage: BufferUsage::STORAGE_BUFFER,
+    //             ..Default::default()
+    //         },
+    //         AllocationCreateInfo {
+    //             memory_type_filter: MemoryTypeFilter::PREFER_DEVICE | MemoryTypeFilter::HOST_SEQUENTIAL_WRITE,
+    //             ..Default::default()
+    //         },
+    //         instance_matrices_data 
+    //     ).unwrap()
+    // );
+
+
     event_loop.run(move |event, _, control_flow| {
         let now = Instant::now();
         let frame_duration = now - start;
@@ -181,6 +213,18 @@ fn main() {
             
             // Handle mouse movement
             Event::WindowEvent { 
+                event: WindowEvent::CursorLeft { .. }, 
+                ..
+            } => {last_position_cursor = None;}
+            Event::WindowEvent { 
+                event: WindowEvent::MouseInput { button: MouseButton::Left, state: ElementState::Pressed, .. }, 
+                ..
+            } => {capturing_mouse_input = true;}
+            Event::WindowEvent { 
+                event: WindowEvent::MouseInput { button: MouseButton::Left, state: ElementState::Released, .. }, 
+                ..
+            } => {capturing_mouse_input = false;}
+            Event::WindowEvent { 
                 event: WindowEvent::CursorMoved { position, .. }, 
                 ..
             } => {
@@ -200,7 +244,6 @@ fn main() {
                 event: WindowEvent::MouseWheel { delta, .. },
                 ..
             } => {
-                println!("{:?}", delta);
                 match delta {
                     MouseScrollDelta::LineDelta(_, dw) => {
                         renderer.handle_mwheel_events(dw);
@@ -208,26 +251,6 @@ fn main() {
 
                     _ => { return; }
                 }
-            }
-
-
-            Event::WindowEvent { 
-                event: WindowEvent::CursorLeft { .. }, 
-                ..
-            } => {
-                last_position_cursor = None;
-            }
-            Event::WindowEvent { 
-                event: WindowEvent::MouseInput { button: MouseButton::Left, state: ElementState::Pressed, .. }, 
-                ..
-            } => {
-                capturing_mouse_input = true;
-            }
-            Event::WindowEvent { 
-                event: WindowEvent::MouseInput { button: MouseButton::Left, state: ElementState::Released, .. }, 
-                ..
-            } => {
-                capturing_mouse_input = false;
             }
 
             Event::WindowEvent { 
@@ -245,8 +268,15 @@ fn main() {
             }
             Event::RedrawEventsCleared => {
                 renderer.scene_camera.set_position(renderer.scene_camera.get_position() + Vector3::new(0.0, 0.00, 0.0));
+
+                let buffer = fluid.update(0.01, &BoundingBox { x1: 0.0, x2: 3.0, z1: 0.0, z2: 3.0, y1: 0.0, damping_factor: 0.08 });
+
                 let first = renderer.begin();
-                renderer.draw(&mesh); 
+
+                renderer.draw(&mesh);
+                // renderer.draw(&sphere);
+                renderer.draw_particles(&sphere, buffer);
+
                 renderer.end(first);
             }
             _ => ()

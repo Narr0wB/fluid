@@ -12,11 +12,17 @@ pub struct MVertex {
     pub position: [f32; 3]
 }
 
+impl From<Vector3<f32>> for MVertex {
+    fn from(vec: Vector3<f32>) -> Self {
+        MVertex {position: [vec.x, vec.y, vec.z]}
+    }
+}
+
 
 pub struct Mesh {
-    vertex_buffer: Subbuffer<[MVertex]>,
-    model_matrix: Matrix4<f32>,
+    vertex_buffer: Subbuffer<[MVertex]>, 
     index_buffer: Subbuffer<[u32]>,
+    model_matrix: Matrix4<f32>,
 }
 
 impl Mesh {
@@ -34,21 +40,21 @@ impl Mesh {
             },
             vertices.into_iter()
         ).unwrap();
-
+        
         let index_buffer = Buffer::from_iter(
-            mem_allocator.clone(),
-            BufferCreateInfo {
-                usage: BufferUsage::INDEX_BUFFER,
-                ..Default::default()
-            },
-            AllocationCreateInfo {
-                memory_type_filter: MemoryTypeFilter::PREFER_DEVICE | MemoryTypeFilter::HOST_SEQUENTIAL_WRITE,
-                ..Default::default()
-            },
-            indices.into_iter()
-        ).unwrap();
-
-        Mesh {vertex_buffer, model_matrix, index_buffer}
+                mem_allocator.clone(),
+                BufferCreateInfo {
+                    usage: BufferUsage::INDEX_BUFFER,
+                    ..Default::default()
+                },
+                AllocationCreateInfo {
+                    memory_type_filter: MemoryTypeFilter::PREFER_DEVICE | MemoryTypeFilter::HOST_SEQUENTIAL_WRITE,
+                    ..Default::default()
+                },
+                indices.into_iter()
+            ).unwrap();
+        
+       Mesh {vertex_buffer, model_matrix, index_buffer}
     }
     
     pub fn get_vertex_buffer(&self) -> &Subbuffer<[MVertex]> {
@@ -62,5 +68,38 @@ impl Mesh {
     pub fn get_model_matrix(&self) -> &Matrix4<f32> {
         &self.model_matrix
     }
+
+    pub fn len(&self) -> u64 {
+        self.index_buffer.len()
+    }
     
+}
+
+pub fn create_sphere(radius: f32, center: Vector3<f32>, resolution: u32, mem_allocator: Arc<StandardMemoryAllocator>) -> Mesh {
+    let mut vertices = vec![];
+    let mut indices  = vec![];
+
+    for i in 0..resolution {
+        let theta = (i as f32 / (resolution-1) as f32) * std::f32::consts::PI;
+        
+        for j in 0..resolution {
+            let phi = (j as f32 / (resolution-1) as f32) * 2.0 * std::f32::consts::PI;
+
+            indices.push(i * resolution + j);
+            indices.push(i * resolution + j + 1);
+            indices.push((i+1) * resolution + j);
+            indices.push(i * resolution + j + 1);
+            indices.push((i+1) * resolution + j);
+            indices.push((i+1) * resolution + j + 1);
+
+            vertices.push(Vector3::<f32>::new(center.x + radius * theta.sin() * phi.cos(), center.y + radius * theta.sin() * phi.sin(), center.z + radius * theta.cos()));
+        }
+    }
+
+    let mvertices: Vec<MVertex> = vertices
+        .into_iter()
+        .map(MVertex::from)
+        .collect(); 
+
+    Mesh::new(mem_allocator, mvertices, indices, Matrix4::identity())
 }
