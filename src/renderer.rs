@@ -33,6 +33,7 @@ use winit::event::{KeyboardInput, VirtualKeyCode};
 use std::any::Any;
 use std::convert::identity;
 use std::sync::Arc;
+use std::time::Instant;
 
 use winit::{event::{Event, WindowEvent}, event_loop::{ControlFlow, EventLoop}, window::*};
 
@@ -356,7 +357,7 @@ impl Renderer {
                 vertex_input_state: Some(vertex_input_state),
                 input_assembly_state: Some(InputAssemblyState { topology: PrimitiveTopology::TriangleList, ..InputAssemblyState::default() }),
                 viewport_state: Some(ViewportState::default()),
-                rasterization_state: Some(RasterizationState { polygon_mode: PolygonMode::Line, ..Default::default() }),
+                rasterization_state: Some(RasterizationState { polygon_mode: PolygonMode::Fill, ..Default::default() }),
                 depth_stencil_state: Some(DepthStencilState {depth: Some(DepthState::simple()), ..Default::default()}),
                 multisample_state: Some(MultisampleState::default()),
                 color_blend_state: Some(ColorBlendState::with_attachment_states(
@@ -716,14 +717,18 @@ impl Renderer {
 
         let cmd = cmd_builder.build().unwrap();
         
+        
         self.secondary_cmd_buffers.clear();
-        let _ = last_future
-            .then_execute(self.render_queue.clone(), cmd).unwrap()
+        let edd = last_future
+            .then_execute(self.render_queue.clone(), cmd).unwrap();
+        let edd1 = edd
+            .then_signal_fence_and_flush().unwrap();
+        let before = Instant::now();
+        let _ = edd1
             .then_swapchain_present(
-                    self.render_queue.clone(),
-                    SwapchainPresentInfo::swapchain_image_index(self.swapchain.clone(), self.acquired_image)
-                )
-            .then_signal_fence_and_flush()
-            .expect("Could not send the command buffer to the GPU!");
+                self.render_queue.clone(),
+                SwapchainPresentInfo::swapchain_image_index(self.swapchain.clone(), self.acquired_image)
+            );
+        println!("it took {:.2?}", before.elapsed());
     }
 }

@@ -1,7 +1,7 @@
 #[allow(unused_imports)]
 
 use std::sync::Arc;
-use fluid::{BoundingBox, Fluid, PARTICLE_RADIUS};
+use fluid::{particle_cube, BoundingBox, Fluid, PARTICLE_RADIUS};
 use vulkano::buffer::allocator::{SubbufferAllocator, SubbufferAllocatorCreateInfo};
 use vulkano::format::Format;
 use vulkano::descriptor_set::{allocator::StandardDescriptorSetAllocator, PersistentDescriptorSet, WriteDescriptorSet};
@@ -157,40 +157,12 @@ fn main() {
     let mut last_position_cursor = None::<PhysicalPosition<f64>>;
 
     let mut capturing_mouse_input = false;
-    let sphere = create_sphere(PARTICLE_RADIUS, Vector3::new(0.0, 0.0, 0.0), 10, memory_allocator.clone());
+    let sphere = create_sphere(PARTICLE_RADIUS, Vector3::new(0.0, 0.0, 0.0), 100, memory_allocator.clone());
 
-    let particles = vec![Particle::new(Vector3::new(0.5, 5.0, 2.0), None), Particle::new(Vector3::new(1.0, 4.0, 1.0), None), Particle::new(Vector3::new(0.7, 6.0, 0.5), None), Particle::new(Vector3::new(1.0, 8.0, 2.5), None), Particle::new(Vector3::new(1.5, 3.0, 1.5), None)];
+    // let particles = vec![Particle::new(Vector3::new(0.5, 5.0, 2.0), None), Particle::new(Vector3::new(1.0, 4.0, 1.0), None), Particle::new(Vector3::new(0.7, 6.0, 0.5), None), Particle::new(Vector3::new(1.0, 8.0, 2.5), None), Particle::new(Vector3::new(1.5, 3.0, 1.5), None)];
     
+    let particles = particle_cube(Vector3::new(1.0, 1.0, 1.0), 1);
     let mut fluid = Fluid::new(particles, 0.0, memory_allocator.clone());
-    // Create the instances model matrices
-    // let mut instance_matrices_data = vec![];
-
-    // particles
-    //     .iter()
-    //     .for_each(|p| {
-    //         instance_matrices_data.extend_from_slice(Matrix4::new_translation(&p.position).as_slice());
-    //         instance_matrices_data.push(p.velocity.norm() as f32 / 10.0);
-    //         instance_matrices_data.push(p.velocity.norm() as f32 / 10.0);
-    //         instance_matrices_data.push(p.velocity.norm() as f32 / 10.0);
-    //         instance_matrices_data.push(p.velocity.norm() as f32 / 10.0);
-    //     });
-    //
-    // // Put the model matrices in a UBO
-    // let mut matrices_buffer = Arc::new(
-    //     Buffer::from_iter(
-    //         memory_allocator.clone(),
-    //         BufferCreateInfo {
-    //             usage: BufferUsage::STORAGE_BUFFER,
-    //             ..Default::default()
-    //         },
-    //         AllocationCreateInfo {
-    //             memory_type_filter: MemoryTypeFilter::PREFER_DEVICE | MemoryTypeFilter::HOST_SEQUENTIAL_WRITE,
-    //             ..Default::default()
-    //         },
-    //         instance_matrices_data 
-    //     ).unwrap()
-    // );
-
 
     event_loop.run(move |event, _, control_flow| {
         let now = Instant::now();
@@ -267,16 +239,16 @@ fn main() {
                 renderer.recreate_swapchain();
             }
             Event::RedrawEventsCleared => {
-                renderer.scene_camera.set_position(renderer.scene_camera.get_position() + Vector3::new(0.0, 0.00, 0.0));
-
-                let buffer = fluid.update(0.01, &BoundingBox { x1: 0.0, x2: 3.0, z1: 0.0, z2: 3.0, y1: 0.0, damping_factor: 0.08 });
-
+                 
+                let buffer = fluid.update(0.01, &BoundingBox { x1: 0.0, x2: 3.0, z1: 0.0, z2: 3.0, y1: 0.0, y2: 3.0, damping_factor: 0.08 });
+                
                 let first = renderer.begin();
-
+                
                 renderer.draw(&mesh);
                 // renderer.draw(&sphere);
                 renderer.draw_particles(&sphere, buffer);
-
+                
+                
                 renderer.end(first);
             }
             _ => ()

@@ -44,14 +44,42 @@ impl Particle {
     }
 }
 
+pub fn particle_cube(start: Vector3<f32>, side: u32) -> Vec<Particle> {
+    let mut p_cube = vec![];
+
+    for i in 0..side {
+        for j in 0..side {
+            for k in 0..side {
+                p_cube.push(Particle::new(Vector3::new(start.x + PARTICLE_RADIUS + i as f32 * (PARTICLE_RADIUS * 2.0), start.y + PARTICLE_RADIUS + k as f32 * (PARTICLE_RADIUS * 2.0), start.z + PARTICLE_RADIUS + j as f32 * (PARTICLE_RADIUS * 2.0)), None));
+            }
+        }    
+    }
+
+    p_cube
+}
+
 pub struct BoundingBox {
     pub x1: f32,
     pub x2: f32,
     pub z1: f32,
     pub z2: f32,
     pub y1: f32,
+    pub y2: f32,
     
     pub damping_factor: f32 // Between 0 and 1 (ideally 0.1 and 0.4)
+}
+
+impl BoundingBox {
+    pub fn edge_collision(&self, position: Vector3<f32>, threshold: f32) -> bool {
+        return ((self.x1 - threshold <= position.x && position.x <= self.x1) ||
+                (self.x2 <= position.x && position.x <= self.x2 + threshold) ||
+
+                (self.z1 - threshold <= position.z && position.z <= self.z1) ||
+                (self.z2 <= position.z && position.z <= self.z2 + threshold) ||
+
+                (self.y1 - threshold <= position.y && position.y <= self.y1)) 
+                && (position.y <= self.y2);
+    }
 }
 
 pub struct Fluid {
