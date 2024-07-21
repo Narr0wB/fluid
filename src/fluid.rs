@@ -1,9 +1,20 @@
 use nalgebra::{*};
-use std::sync::Arc;
-use vulkano::{buffer::{Buffer, BufferCreateInfo, BufferUsage, Subbuffer}, memory::allocator::{AllocationCreateInfo, MemoryTypeFilter, StandardMemoryAllocator}};
+use std::{sync::Arc, time::Instant};
+use vulkano::{buffer::{Buffer, BufferCreateInfo, BufferUsage, Subbuffer}, descriptor_set::{allocator::{DescriptorSetAllocator, StandardDescriptorSetAllocator}, PersistentDescriptorSet, WriteDescriptorSet}, device::Device, memory::allocator::{AllocationCreateInfo, MemoryTypeFilter, StandardMemoryAllocator}, pipeline::{compute::ComputePipelineCreateInfo, layout::PipelineDescriptorSetLayoutCreateInfo, ComputePipeline, PipelineLayout, PipelineShaderStageCreateInfo}};
 
-pub const PARTICLE_RADIUS: f32  = 0.1;
+pub const PARTICLE_RADIUS: f32  = 0.1; // m
+pub const PARTICLE_MASS: f32    = 0.5; // kg
+pub const SMOOTHING_RADIUS: f32 = 1.0; // m
 pub const GRAVITY: Vector3<f32> = Vector3::new(0.0, -9.81, 0.0);
+
+mod cs {
+    vulkano_shaders::shader! {
+        ty: "compute",
+        src: "
+            
+        "
+    }
+}
 
 pub struct Particle {
     pub position: Vector3<f32>,
@@ -82,17 +93,24 @@ impl BoundingBox {
     }
 }
 
+
+
 pub struct Fluid {
+    device: Arc<Device>,
+
     particles: Vec<Particle>,
+    target_density: f32,
     pressure_constant: f32,
 
-    model_buffer: Subbuffer<[f32]>
+    model_buffer: Subbuffer<[f32]>,
+    compute_particle_buffer: Option<Subbuffer<[f32]>>,
+    compute_descriptor_set: Option<Arc<PersistentDescriptorSet>>
 }
 
 impl Fluid {
-    pub fn new(particles: Vec<Particle>, pressure: f32, memory_allocator: Arc<StandardMemoryAllocator>) -> Self {
-        // Create the buffer for how many particles this fluid has
-        
+    pub fn new(particles: Vec<Particle>, target_density: f32, pressure: f32, device: Arc<Device>) -> Self {
+        let memory_allocator = Arc::new(StandardMemoryAllocator::new(device.clone(), Default::default()));
+
         let matrices_buffer = 
             Buffer::new_slice::<f32>(
                 memory_allocator.clone(),
@@ -107,24 +125,171 @@ impl Fluid {
                 (particles.len() * (16 + 4)) as u64 
             ).unwrap();
         
-        Fluid { particles, pressure_constant: pressure, model_buffer: matrices_buffer}
+        Fluid { device, particles, target_density, pressure_constant: pressure, model_buffer: matrices_buffer, compute_descriptor_set: None, compute_particle_buffer: None }
     }
 
-    pub fn update(&mut self, dt: f32, bounds: &BoundingBox) -> &Subbuffer<[f32]> {
-        // Calculate forces and accelerations
+    pub fn update(&mut self, dt: f32, bounds: &BoundingBox) -> (&Subbuffer<[f32]>, u32) {
+        let len = self.particles.len();
+
+        let mut densities = vec![];
         
-        // Propagate to each single particles
-        for (i, particle) in self.particles.iter_mut().enumerate() {
-            particle.update_accel(GRAVITY);
+
+        let before = Instant::now(); 
+        for i in 0..len {
+            densities.push(0.0);
+
+            for j in 0..len {
+                let particle = &self.particles[i];
+                let other    = &self.particles[j];
+                
+                let dist = (particle.position - other.position).norm(); 
+
+                if dist > SMOOTHING_RADIUS {continue;}
+
+                densities[i] += PARTICLE_MASS * smoothing_kernel(dist, SMOOTHING_RADIUS);
+            }
+        }
+
+        println!("{:?} {}", before.elapsed(), len); 
+        for i in 0..len {
+            let mut pressure_force = Vector3::repeat(0.0);
+
+            for j in 0..len {
+                if i == j {continue;}
+                let particle = &self.particles[i];
+
+                let mut dir = particle.position - self.particles[j].position;
+                let dist = dir.norm();
+
+                if dist > SMOOTHING_RADIUS {continue;}
+                dir = dir / dist;
+
+                let density = densities[j];
+
+                pressure_force += -(self.convert_density_pressure(density) * smoothing_kernel_derivative(dist, SMOOTHING_RADIUS) * PARTICLE_MASS / density) * dir;  
+            }
+
+            let particle = &mut self.particles[i];
+
+            particle.update_accel(GRAVITY + pressure_force);
             particle.update(dt, bounds);
-            
-            let particle_velocity_uv = particle.velocity.norm() / 10.0;
+
+            let particle_velocity_uv = particle.velocity.norm() / 20.0;
             let offset = i * (16 + 4);
 
             self.model_buffer.write().unwrap()[offset..offset+16].copy_from_slice(Matrix4::new_translation(&particle.position).as_slice());
             self.model_buffer.write().unwrap()[offset+16..offset+20].copy_from_slice(Vector4::repeat(particle_velocity_uv).as_slice());
         }
 
-        &self.model_buffer
+        (&self.model_buffer, len as u32)
     }
+
+    pub fn bind_compute(&mut self, pipeline: &FluidComputePipeline) {
+        // Create the compute particle buffer
+        let memory_allocator = Arc::new(StandardMemoryAllocator::new(self.device.clone(), Default::default()));
+
+        let stride = 2 * 4;
+
+        self.compute_particle_buffer = Some(
+            Buffer::new_slice::<f32>(
+                memory_allocator.clone(),
+                BufferCreateInfo {
+                    usage: BufferUsage::STORAGE_BUFFER,
+                    ..Default::default()
+                },
+                AllocationCreateInfo {
+                    memory_type_filter: MemoryTypeFilter::PREFER_DEVICE | MemoryTypeFilter::HOST_SEQUENTIAL_WRITE,
+                    ..Default::default()
+                },
+                (self.particles.len() * stride) as u64 
+            ).unwrap()
+        );
+        
+        for offset in 0..self.particles.len() {
+            let particle = &self.particles[offset];
+
+            let position = Vector4::new(particle.position.x, particle.position.y, particle.position.z, 0.0);
+            let velocity = Vector4::new(particle.velocity.x, particle.velocity.y, particle.velocity.z, 0.0);
+
+            let final_slice = [position.as_slice(), velocity.as_slice()].concat();
+
+            self.compute_particle_buffer.as_mut().unwrap().write().unwrap()[offset * stride..(offset+1) * stride].copy_from_slice(&final_slice);
+        }
+        
+        let layout = pipeline.layout().clone();
+
+        let descriptor_set_allocator = StandardDescriptorSetAllocator::new(self.device.clone(), Default::default());
+        let descriptor_set_layout = layout
+            .set_layouts()
+            .get(0).unwrap();
+
+        self.compute_descriptor_set = Some(
+                PersistentDescriptorSet::new(
+                &descriptor_set_allocator,
+                descriptor_set_layout.clone(),
+                [
+                    WriteDescriptorSet::buffer(0, self.compute_particle_buffer.as_ref().unwrap().clone())
+                ],
+                []
+            ).unwrap()
+        );
+    }
+
+    fn convert_density_pressure(&self, density: f32) -> f32 {
+        (density - self.target_density) * self.pressure_constant
+    }
+}
+
+pub struct FluidComputePipeline {
+    device: Arc<Device>,
+    pipeline: Arc<ComputePipeline>,
+    layout: Arc<PipelineLayout>
+}
+
+impl FluidComputePipeline {
+    pub fn new(device: Arc<Device>) -> Self {
+        let shader = cs::load(device.clone()).unwrap();
+        
+        let stage = PipelineShaderStageCreateInfo::new(shader.entry_point("main").unwrap());
+        
+        let layout = PipelineLayout::new(
+            device.clone(),
+            PipelineDescriptorSetLayoutCreateInfo::from_stages([&stage])
+                .into_pipeline_layout_create_info(device.clone()).unwrap()
+        ).unwrap();
+
+        let pipeline = ComputePipeline::new(
+            device.clone(),
+            None,
+            ComputePipelineCreateInfo::stage_layout(stage, layout.clone()) 
+        ).unwrap();
+
+        Self { device, pipeline, layout }
+    }
+     
+    pub fn layout(&self) -> Arc<PipelineLayout> {
+        self.layout.clone()
+    }
+}
+
+pub fn smoothing_kernel(dist: f32, radius: f32) -> f32 {
+    if dist < radius { 
+        2.0 * (-dist.abs()).exp() / smoothing_sphere_volume(radius) 
+    }
+    else {
+        0.0
+    }
+}
+
+pub fn smoothing_kernel_derivative(dist: f32, radius: f32) -> f32 {
+    if dist < radius { 
+        ( smoothing_kernel(dist + 0.001, radius) - smoothing_kernel(dist, radius) ) / 0.001 
+    }
+    else {
+        0.0
+    }
+}
+
+pub fn smoothing_sphere_volume(radius: f32) -> f32 {
+    2.0
 }

@@ -602,7 +602,7 @@ impl Renderer {
         Box::new(future)
     }
 
-    pub fn draw_particles(&mut self, sphere: &Mesh, particles: &Subbuffer<[f32]>) {
+    pub fn draw_particles(&mut self, sphere: &Mesh, particle_models: &Subbuffer<[f32]>, particles: u32) {
         let descriptor_set_allocator = 
             StandardDescriptorSetAllocator::new(self.device.clone(), Default::default());
 
@@ -613,7 +613,7 @@ impl Renderer {
             pvs_layout.clone(),
             [
                 WriteDescriptorSet::buffer(0, (*self.mvp_buffer).clone()),
-                WriteDescriptorSet::buffer(1, (*particles).clone())
+                WriteDescriptorSet::buffer(1, (*particle_models).clone())
             ],
             []
         ).unwrap();
@@ -641,7 +641,7 @@ impl Renderer {
             ).unwrap()
             .bind_vertex_buffers(0, sphere.get_vertex_buffer().clone()).unwrap()
             .bind_index_buffer(sphere.get_index_buffer().clone()).unwrap()
-            .draw_indexed(sphere.len() as u32, particles.len() as u32, 0, 0, 0).unwrap();
+            .draw_indexed(sphere.len() as u32, particles as u32, 0, 0, 0).unwrap();
 
         let cmd_buf = cmd_builder.build().unwrap();
         
@@ -712,23 +712,24 @@ impl Renderer {
         let _ = cmd_builder
             .execute_commands_from_vec(self.secondary_cmd_buffers.clone()).unwrap();
 
+        self.secondary_cmd_buffers.clear();
+        
         cmd_builder
             .end_render_pass(Default::default()).unwrap();
 
-        let cmd = cmd_builder.build().unwrap();
-        
-        
-        self.secondary_cmd_buffers.clear();
-        let edd = last_future
-            .then_execute(self.render_queue.clone(), cmd).unwrap();
-        let edd1 = edd
+        let cmd = cmd_builder.build().unwrap(); 
+
+        let edd = sync::now(self.device.clone()) 
+            .then_execute(self.render_queue.clone(), cmd).unwrap()
             .then_signal_fence_and_flush().unwrap();
-        let before = Instant::now();
-        let _ = edd1
+
+        edd.wait(None).unwrap();
+        
+        let tmp = last_future 
             .then_swapchain_present(
                 self.render_queue.clone(),
                 SwapchainPresentInfo::swapchain_image_index(self.swapchain.clone(), self.acquired_image)
-            );
-        println!("it took {:.2?}", before.elapsed());
+            )
+            .then_signal_fence_and_flush().unwrap();
     }
 }

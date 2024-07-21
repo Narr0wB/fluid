@@ -59,11 +59,12 @@ fn main() {
     // Create new device
     let device_extensions = DeviceExtensions {
         khr_swapchain: true,
+        ext_shader_atomic_float: true,
         ..DeviceExtensions::empty()
     };
 
     // Select physical device
-    let (phys_device, queue_family_index) = instance
+    let (phys_device, queue_family_graphics) = instance
         .enumerate_physical_devices()
         .unwrap()
         .filter(|p| {
@@ -91,6 +92,14 @@ fn main() {
         })
         .expect("Could not find a suitable device");
 
+    let queue_family_compute = phys_device
+        .queue_family_properties()
+        .iter()
+        .enumerate()
+        .position(|(i, q)| {
+            q.queue_flags.intersects(QueueFlags::COMPUTE)
+        }).unwrap() as u32;
+
     if cfg!(DEBUG) {
         println!(
             "Using device: {} (type: {:?})",
@@ -107,19 +116,35 @@ fn main() {
                 ..Default::default()
             },
             enabled_extensions: device_extensions,
-            queue_create_infos: vec![QueueCreateInfo{
-                queue_family_index,
-                ..Default::default()
-            }],
+            queue_create_infos: vec![
+                QueueCreateInfo {
+                    queue_family_index: queue_family_graphics,
+                    ..Default::default()
+                },
+                QueueCreateInfo {
+                    queue_family_index: queue_family_compute,
+                    ..Default::default()
+                }
+            ],
             ..Default::default()
         }
     )
     .unwrap();
 
+    let graphics_queue = queues
+        .find(|q| {
+            q.queue_family_index() == queue_family_graphics
+        }).unwrap();
+
+    let compute_queue = queues
+        .find(|q| {
+            q.queue_family_index() == queue_family_graphics
+        }).unwrap();
+
     let memory_allocator = Arc::new(StandardMemoryAllocator::new_default(device.clone()));
 
     let mut camera = Camera::new(
-        Vector3::new(2.0, 4.0, -4.0),                       // position
+        Vector3::new(7.0, 5.0, 3.0),                       // position
         Unit::new_normalize(Vector3::new(0.0, 0.0, 1.0)),   // orientation
         None,                                               // aspect_ratio
         50.0                                                // FOV
@@ -127,14 +152,14 @@ fn main() {
 
     camera.set_target(Vector3::new(0.0, 0.0, 0.0));
 
-    let mut renderer = Renderer::init(instance, &event_loop, camera, device.clone(), queues.next().unwrap().clone()); 
+    let mut renderer = Renderer::init(instance, &event_loop, camera, device.clone(), graphics_queue.clone()); 
     
     let vertices: Vec<MVertex> = vec![
-        MVertex {position: [0.0, 0.0, 0.0]}, MVertex {position: [0.0, 1.5, 0.0]},
-        MVertex {position: [0.0, 0.0, 1.0]}, MVertex {position: [0.0, 1.5, 1.0]},
+        MVertex {position: [0.0, 0.0, 0.0]}, MVertex {position: [0.0, 1.0, 0.0]},
+        MVertex {position: [0.0, 0.0, 1.0]}, MVertex {position: [0.0, 1.0, 1.0]},
 
-        MVertex {position: [2.0, 0.0, 0.0]}, MVertex {position: [2.0, 1.5, 0.0]},
-        MVertex {position: [2.0, 0.0, 1.0]}, MVertex {position: [2.0, 1.5, 1.0]},    
+        MVertex {position: [1.0, 0.0, 0.0]}, MVertex {position: [1.0, 1.0, 0.0]},
+        MVertex {position: [1.0, 0.0, 1.0]}, MVertex {position: [1.0, 1.0, 1.0]},    
     ];
     
     let indices: Vec<u32> = vec![
@@ -147,29 +172,26 @@ fn main() {
         0, 4, 1, 1, 5, 4
     ]; 
     
-    let model_matrix = Matrix4::new_scaling(3.0);
+    let model_matrix = Matrix4::new_scaling(5.0);
      
     let mesh = Mesh::new(memory_allocator.clone(), vertices, indices, model_matrix); 
 
-    let mut start = Instant::now();
-    let mut current_angle: f32 = 0.0;
-    let rotation_speed: f32 = 2.0 * std::f32::consts::PI / 1000.0;
+    // let mut current_angle: f32 = 0.0;
+    // let rotation_speed: f33 = 2.0 * std::f32::consts::PI / 1000.0;
     let mut last_position_cursor = None::<PhysicalPosition<f64>>;
 
     let mut capturing_mouse_input = false;
-    let sphere = create_sphere(PARTICLE_RADIUS, Vector3::new(0.0, 0.0, 0.0), 100, memory_allocator.clone());
-
-    // let particles = vec![Particle::new(Vector3::new(0.5, 5.0, 2.0), None), Particle::new(Vector3::new(1.0, 4.0, 1.0), None), Particle::new(Vector3::new(0.7, 6.0, 0.5), None), Particle::new(Vector3::new(1.0, 8.0, 2.5), None), Particle::new(Vector3::new(1.5, 3.0, 1.5), None)];
+    let sphere = create_sphere(PARTICLE_RADIUS, Vector3::new(0.0, 0.0, 0.0), 20, memory_allocator.clone());
     
-    let particles = particle_cube(Vector3::new(1.0, 1.0, 1.0), 1);
-    let mut fluid = Fluid::new(particles, 0.0, memory_allocator.clone());
+    let particles = particle_cube(Vector3::new(2.0, 4.0, 2.0), 6);
+    let mut fluid = Fluid::new(particles, 2.0, 0.5, memory_allocator.clone());
 
     event_loop.run(move |event, _, control_flow| {
-        let now = Instant::now();
-        let frame_duration = now - start;
-        start = Instant::now();
-        
-        current_angle += rotation_speed * ((frame_duration.as_millis() as f32 / 10.0) as f32);
+        // let now = Instant::now();
+        // let frame_duration = now - start;
+        // start = Instant::now();
+        // 
+        // current_angle += rotation_speed * ((frame_duration.as_millis() as f32 / 10.0) as f32);
 
         match event {
             // Handle keyboard movement (WASD)
@@ -239,15 +261,15 @@ fn main() {
                 renderer.recreate_swapchain();
             }
             Event::RedrawEventsCleared => {
-                 
-                let buffer = fluid.update(0.01, &BoundingBox { x1: 0.0, x2: 3.0, z1: 0.0, z2: 3.0, y1: 0.0, y2: 3.0, damping_factor: 0.08 });
-                
+                // let before = Instant::now();
+                let (buffer, num_particles) = fluid.update(0.01, &BoundingBox { x1: 0.0, x2: 5.0, z1: 0.0, z2: 5.0, y1: 0.0, y2: 5.0, damping_factor: 0.7 });
+                // println!("it took {:.2?}", before.elapsed());
+
                 let first = renderer.begin();
                 
                 renderer.draw(&mesh);
                 // renderer.draw(&sphere);
-                renderer.draw_particles(&sphere, buffer);
-                
+                renderer.draw_particles(&sphere, buffer, num_particles);
                 
                 renderer.end(first);
             }
