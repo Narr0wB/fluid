@@ -88,7 +88,6 @@ mod pvs {
 
             struct Particle {
                 mat4 model;
-                vec4 color;
             };
             
             layout(set = 0, binding = 0) uniform view {
@@ -104,8 +103,11 @@ mod pvs {
             layout(location = 0) out vec4 param;
 
             void main() {
-                gl_Position = v.vp * p.particles[gl_InstanceIndex].model * vec4(position, 1.0);
-                param = p.particles[gl_InstanceIndex].color;
+                mat4 model = p.particles[gl_InstanceIndex].model;
+                float color = model[0][0];
+                model[0][0] = 1.0;
+                gl_Position = v.vp * model * vec4(position, 1.0);
+                param = vec4(color);
             }
         "
     }
@@ -432,7 +434,7 @@ impl Renderer {
             std_memory_allocator: mem_allocator,
             descriptor_set,
             secondary_cmd_buffers: vec![],
-            move_sensitivity: 0.1,
+            move_sensitivity: 0.5,
             mouse_sensitivity: 0.01,
             fov_step: 5.0
         }

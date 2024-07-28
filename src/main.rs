@@ -1,7 +1,7 @@
 #[allow(unused_imports)]
 
 use std::sync::Arc;
-use fluid::{particle_cube, BoundingBox, Fluid, PARTICLE_RADIUS};
+use fluid::{particle_cube, BoundingBox, Fluid, PARTICLE_RADIUS, SMOOTHING_RADIUS};
 use vulkano::buffer::allocator::{SubbufferAllocator, SubbufferAllocatorCreateInfo};
 use vulkano::format::Format;
 use vulkano::descriptor_set::{allocator::StandardDescriptorSetAllocator, PersistentDescriptorSet, WriteDescriptorSet};
@@ -34,11 +34,11 @@ mod fluid;
 use crate::camera::Camera;
 use crate::renderer::Renderer;
 use crate::mesh::{*};
-use crate::fluid::Particle;
+use crate::fluid::{FluidComputePipeline, Particle};
 
 use winit::{event::{Event, WindowEvent}, event_loop::{ControlFlow, EventLoop}, window::*};
 
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 fn main() {
     let event_loop = EventLoop::new();
@@ -92,14 +92,6 @@ fn main() {
         })
         .expect("Could not find a suitable device");
 
-    let queue_family_compute = phys_device
-        .queue_family_properties()
-        .iter()
-        .enumerate()
-        .position(|(i, q)| {
-            q.queue_flags.intersects(QueueFlags::COMPUTE)
-        }).unwrap() as u32;
-
     if cfg!(DEBUG) {
         println!(
             "Using device: {} (type: {:?})",
@@ -107,22 +99,19 @@ fn main() {
             phys_device.properties().device_type
         );
     }
-    
+
     let (device, mut queues) = Device::new(
         phys_device,
         DeviceCreateInfo {
             enabled_features: Features {
                 fill_mode_non_solid: true,
+                shader_buffer_float32_atomic_add: true,
                 ..Default::default()
             },
             enabled_extensions: device_extensions,
             queue_create_infos: vec![
                 QueueCreateInfo {
                     queue_family_index: queue_family_graphics,
-                    ..Default::default()
-                },
-                QueueCreateInfo {
-                    queue_family_index: queue_family_compute,
                     ..Default::default()
                 }
             ],
@@ -131,26 +120,17 @@ fn main() {
     )
     .unwrap();
 
-    let graphics_queue = queues
-        .find(|q| {
-            q.queue_family_index() == queue_family_graphics
-        }).unwrap();
-
-    let compute_queue = queues
-        .find(|q| {
-            q.queue_family_index() == queue_family_graphics
-        }).unwrap();
-
+    let graphics_queue = queues.next().unwrap();
     let memory_allocator = Arc::new(StandardMemoryAllocator::new_default(device.clone()));
 
     let mut camera = Camera::new(
-        Vector3::new(7.0, 5.0, 3.0),                       // position
+        Vector3::new(7.0, 4.0, 13.0),                       // position
         Unit::new_normalize(Vector3::new(0.0, 0.0, 1.0)),   // orientation
         None,                                               // aspect_ratio
-        50.0                                                // FOV
+        30.0                                                // FOV
     );
 
-    camera.set_target(Vector3::new(0.0, 0.0, 0.0));
+    camera.set_target(Vector3::new(0.0, 3.0, 0.0));
 
     let mut renderer = Renderer::init(instance, &event_loop, camera, device.clone(), graphics_queue.clone()); 
     
@@ -181,17 +161,19 @@ fn main() {
     let mut last_position_cursor = None::<PhysicalPosition<f64>>;
 
     let mut capturing_mouse_input = false;
-    let sphere = create_sphere(PARTICLE_RADIUS, Vector3::new(0.0, 0.0, 0.0), 20, memory_allocator.clone());
+    let sphere = create_sphere(SMOOTHING_RADIUS / 2.0, Vector3::new(0.0, 0.0, 0.0), 10, memory_allocator.clone());
     
-    let particles = particle_cube(Vector3::new(2.0, 4.0, 2.0), 6);
-    let mut fluid = Fluid::new(particles, 2.0, 0.5, memory_allocator.clone());
+    let particles = particle_cube(Vector3::new(2.5, 0.0, 2.5), 30);
+    let mut fluid = Fluid::new(particles, 50.0, 1.0, device.clone());
+    let compute_pipeline = FluidComputePipeline::new(device.clone());
+
+    // Bind the fluid to the compute pipeline
+    fluid.bind_compute(&compute_pipeline);
+
+    let mut frame_time = 0.0;
 
     event_loop.run(move |event, _, control_flow| {
-        // let now = Instant::now();
-        // let frame_duration = now - start;
-        // start = Instant::now();
-        // 
-        // current_angle += rotation_speed * ((frame_duration.as_millis() as f32 / 10.0) as f32);
+        let before = Instant::now(); 
 
         match event {
             // Handle keyboard movement (WASD)
@@ -262,8 +244,11 @@ fn main() {
             }
             Event::RedrawEventsCleared => {
                 // let before = Instant::now();
-                let (buffer, num_particles) = fluid.update(0.01, &BoundingBox { x1: 0.0, x2: 5.0, z1: 0.0, z2: 5.0, y1: 0.0, y2: 5.0, damping_factor: 0.7 });
+                // let (buffer, num_particles) = fluid.update(0.01, &BoundingBox { x1: 0.0, x2: 5.0, z1: 0.0, z2: 5.0, y1: 0.0, y2: 5.0, damping_factor: 0.7 });
                 // println!("it took {:.2?}", before.elapsed());
+                
+                // let (buffer, num_particles) = fluid.update(1.0 / 120.0, &BoundingBox { x1: 0.0, x2: 5.0, z1: 0.0, z2: 5.0, y1: 0.0, y2: 10.0, damping_factor: 0.5 });
+                let (buffer, num_particles) = compute_pipeline.compute(0.01, &fluid, &BoundingBox { x1: 0.0, x2: 5.0, z1: 0.0, z2: 5.0, y1: 0.0, y2: 10.0, damping_factor: 0.5 }, graphics_queue.clone());
 
                 let first = renderer.begin();
                 
@@ -272,10 +257,15 @@ fn main() {
                 renderer.draw_particles(&sphere, buffer, num_particles);
                 
                 renderer.end(first);
+                frame_time = before.elapsed().as_micros() as f32;
+
+                if (frame_time < 1.0 / 120.0) {
+                    std::thread::sleep(Duration::from_millis((1.0 / 120.0) as u64));
+                }
+                println!("fps {:?} {:?}", 1.0 / (frame_time / 1_000_000_f32), before.elapsed()); 
             }
             _ => ()
         }
-
     });
 
     // println!("odio gli zingari!");
