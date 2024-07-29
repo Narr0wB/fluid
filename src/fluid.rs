@@ -99,7 +99,7 @@ pub fn particle_cube(start: Vector3<f32>, side: u32) -> Vec<Particle> {
                 let randY: f32 = (rand::thread_rng().gen::<f32>() * 0.5 - 1.0) * SMOOTHING_RADIUS / 10.0; 
                 let randZ: f32 = (rand::thread_rng().gen::<f32>() * 0.5 - 1.0) * SMOOTHING_RADIUS / 10.0;
 
-                println!("{:?} {:?} {:?}", randX, randY, randZ);
+                // println!("{:?} {:?} {:?}", randX, randY, randZ);
                 p_cube.push(
                     Particle::new(
                         Vector3::new(

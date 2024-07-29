@@ -107,7 +107,7 @@ void main() {
 
             vec3 contribution = -dir * c.particle_mass * (density_to_pressure(dj) + density_to_pressure(di)) / (2 * dj) * smoothing_kernel_derivative(dist, c.smoothing_radius);
             
-            vec3 viscosity = (pj.velocity.xyz - pi.velocity.xyz) / dj * c.particle_mass * 1.2 * laplacian_kernel(dist, c.smoothing_radius);
+            vec3 viscosity = (pj.velocity.xyz - pi.velocity.xyz) / dj * c.particle_mass * 1.5 * laplacian_kernel(dist, c.smoothing_radius);
 
             contribution += viscosity;
 
@@ -130,22 +130,22 @@ void main() {
 
             if (new_position.x <= c.bounds.x1) {
                 p.particles[i].velocity.x *= -1.0 * (1.0 - c.bounds.damping_factor);
-                new_position.x = c.bounds.x1 + c.smoothing_radius;
+                new_position.x = c.bounds.x1 + (c.smoothing_radius / 2.0);
             }
 
             if (new_position.x >= c.bounds.x2) {
                 p.particles[i].velocity.x *= -1.0 * (1.0 - c.bounds.damping_factor);
-                new_position.x = c.bounds.x2 - c.smoothing_radius;
+                new_position.x = c.bounds.x2 - (c.smoothing_radius / 2.0);
             }
 
             if (new_position.z <= c.bounds.z1) {
                 p.particles[i].velocity.z *= -1.0 * (1.0 - c.bounds.damping_factor);
-                new_position.z = c.bounds.z1 + c.smoothing_radius;
+                new_position.z = c.bounds.z1 + (c.smoothing_radius / 2.0);
             }
 
             if (new_position.z >= c.bounds.z2) {
                 p.particles[i].velocity.z *= -1.0 * (1.0 - c.bounds.damping_factor);
-                new_position.z = c.bounds.z2 - c.smoothing_radius;
+                new_position.z = c.bounds.z2 - (c.smoothing_radius / 2.0);
             }
 
             if (new_position.y <= c.bounds.y1) {

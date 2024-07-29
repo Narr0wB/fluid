@@ -124,13 +124,13 @@ fn main() {
     let memory_allocator = Arc::new(StandardMemoryAllocator::new_default(device.clone()));
 
     let mut camera = Camera::new(
-        Vector3::new(7.0, 4.0, 13.0),                       // position
+        Vector3::new(5.0, 7.0, 0.0),                       // position
         Unit::new_normalize(Vector3::new(0.0, 0.0, 1.0)),   // orientation
         None,                                               // aspect_ratio
         30.0                                                // FOV
     );
 
-    camera.set_target(Vector3::new(0.0, 3.0, 0.0));
+    camera.set_target(Vector3::new(2.5, 2.5, 2.5));
 
     let mut renderer = Renderer::init(instance, &event_loop, camera, device.clone(), graphics_queue.clone()); 
     
@@ -164,13 +164,14 @@ fn main() {
     let sphere = create_sphere(SMOOTHING_RADIUS / 2.0, Vector3::new(0.0, 0.0, 0.0), 10, memory_allocator.clone());
     
     let particles = particle_cube(Vector3::new(2.5, 0.0, 2.5), 30);
-    let mut fluid = Fluid::new(particles, 50.0, 1.0, device.clone());
+    let mut fluid = Fluid::new(particles, 30.0, 0.8, device.clone());
     let compute_pipeline = FluidComputePipeline::new(device.clone());
 
     // Bind the fluid to the compute pipeline
     fluid.bind_compute(&compute_pipeline);
 
     let mut frame_time = 0.0;
+    let mut angle = 0.0;
 
     event_loop.run(move |event, _, control_flow| {
         let before = Instant::now(); 
@@ -262,6 +263,11 @@ fn main() {
                 if (frame_time < 1.0 / 120.0) {
                     std::thread::sleep(Duration::from_millis((1.0 / 120.0) as u64));
                 }
+
+                angle += frame_time / 5_000_000.0;
+
+                renderer.scene_camera.set_position(Vector3::new(2.5 + 7.0 * angle.cos(), 4.0, 2.5 + 7.0 * angle.sin()));
+                renderer.scene_camera.set_target(Vector3::new(2.5, 2.5, 2.5));
                 println!("fps {:?} {:?}", 1.0 / (frame_time / 1_000_000_f32), before.elapsed()); 
             }
             _ => ()
