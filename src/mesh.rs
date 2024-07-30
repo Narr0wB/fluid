@@ -1,12 +1,12 @@
 use std::sync::Arc;
 use vulkano::buffer::{Buffer, BufferContents, BufferCreateInfo, BufferUsage, Subbuffer};
+use vulkano::device::Device;
 use vulkano::pipeline::graphics::vertex_input::Vertex as VertexTrait;
 use vulkano::memory::allocator::{AllocationCreateInfo, MemoryTypeFilter, StandardMemoryAllocator};
 use nalgebra::{*};
 
-
-#[derive(BufferContents, VertexTrait, Default, Clone, Copy)]
 #[repr(C)]
+#[derive(BufferContents, VertexTrait, Default, Clone, Copy)]
 pub struct MVertex {
     #[format(R32G32B32_SFLOAT)] 
     pub position: [f32; 3]
@@ -18,7 +18,6 @@ impl From<Vector3<f32>> for MVertex {
     }
 }
 
-
 pub struct Mesh {
     vertex_buffer: Subbuffer<[MVertex]>, 
     index_buffer: Subbuffer<[u32]>,
@@ -26,7 +25,9 @@ pub struct Mesh {
 }
 
 impl Mesh {
-    pub fn new(mem_allocator: Arc<StandardMemoryAllocator>, vertices: Vec<MVertex>, indices: Vec<u32>, model_matrix: Matrix4<f32>) -> Self {
+    pub fn new(vertices: Vec<MVertex>, indices: Vec<u32>, model_matrix: Matrix4<f32>, device: Arc<Device>) -> Self {
+
+        let mem_allocator = Arc::new(StandardMemoryAllocator::new_default(device.clone()));
         
         let vertex_buffer = Buffer::from_iter(
             mem_allocator.clone(),
@@ -75,7 +76,7 @@ impl Mesh {
     
 }
 
-pub fn create_sphere(radius: f32, center: Vector3<f32>, resolution: u32, mem_allocator: Arc<StandardMemoryAllocator>) -> Mesh {
+pub fn create_sphere(radius: f32, center: Vector3<f32>, resolution: u32, device: Arc<Device>) -> Mesh {
     let mut vertices = vec![];
     let mut indices  = vec![];
 
@@ -101,5 +102,5 @@ pub fn create_sphere(radius: f32, center: Vector3<f32>, resolution: u32, mem_all
         .map(MVertex::from)
         .collect(); 
 
-    Mesh::new(mem_allocator, mvertices, indices, Matrix4::identity())
+    Mesh::new(mvertices, indices, Matrix4::identity(), device)
 }

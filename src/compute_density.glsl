@@ -29,10 +29,6 @@ layout(std140, push_constant) uniform Constants {
     uint size;
     float particle_mass;
     float smoothing_radius;
-    float target_density;
-    float pressure_multiplier;
-    float dt;
-    BoundingBox bounds;
 } c;
 
 float smoothing_kernel(float dist, float radius) {
@@ -42,15 +38,6 @@ float smoothing_kernel(float dist, float radius) {
     
     float volume = 315.0 / (64.0 * M_PI * pow(radius, 9));
     return pow((radius * radius - dist * dist), 3) * volume;
-}
-
-float smoothing_kernel_derivative(float dist, float radius) {
-    // if (dist > radius) {
-    //     return 0.0;
-    // } 
-    
-    float scale = -45.0 / (M_PI * pow(radius, 6));
-    return scale * (radius - dist) * (radius - dist);
 }
 
 void main() {
@@ -65,13 +52,13 @@ void main() {
 
         for (uint j = gl_LocalInvocationID.x; j < c.size; j += gl_WorkGroupSize.x) {
             if (i == j) {continue;}
+
             Particle pj = p.particles[j];
 
             float dist = length(pi.position.xyz - pj.position.xyz);
             if (dist >= c.smoothing_radius) {continue;}
 
             float contribution = c.particle_mass * smoothing_kernel(dist, c.smoothing_radius);
-
             atomicAdd(p.particles[i].position.w, contribution); 
         }
 

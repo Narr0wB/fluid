@@ -3,12 +3,10 @@
 use vulkano::buffer::allocator::{SubbufferAllocator, SubbufferAllocatorCreateInfo};
 use vulkano::command_buffer::allocator::StandardCommandBufferAllocatorCreateInfo;
 use vulkano::command_buffer::{CommandBufferInheritanceRenderPassType, PrimaryAutoCommandBuffer, SecondaryAutoCommandBuffer, SecondaryCommandBufferAbstract};
-use vulkano::descriptor_set::allocator::StandardDescriptorSetAlloc;
-use vulkano::descriptor_set::DescriptorSet;
 use vulkano::device::Queue;
 use vulkano::format::Format;
 use vulkano::descriptor_set::{allocator::StandardDescriptorSetAllocator, PersistentDescriptorSet, WriteDescriptorSet};
-use vulkano::device::{Device, Features, DeviceExtensions, physical::PhysicalDeviceType, DeviceCreateInfo, QueueCreateInfo, QueueFlags};
+use vulkano::device::Device;
 use vulkano::buffer::{Buffer, BufferContents, BufferCreateFlags, BufferCreateInfo, BufferUsage, Subbuffer};
 use vulkano::command_buffer::{allocator::StandardCommandBufferAllocator, CommandBufferInheritanceInfo, AutoCommandBufferBuilder, CommandBufferUsage, RenderPassBeginInfo, SubpassBeginInfo, SubpassContents};
 use vulkano::image::ImageLayout;
@@ -50,7 +48,7 @@ mod vs {
         src: "
             #version 450
 
-            layout(set = 0, binding = 0) uniform view {
+            layout(std140, push_constant) uniform view {
                 mat4 vp;
                 mat4 model;
             } v;
@@ -90,12 +88,11 @@ mod pvs {
                 mat4 model;
             };
             
-            layout(set = 0, binding = 0) uniform view {
-                mat4 vp;
-                mat4 model;
+            layout(std140, push_constant) uniform view {
+                mat4 vp; 
             } v;
  
-            layout(set = 0, binding = 1) buffer particles {
+            layout(set = 0, binding = 0) buffer particles {
                 Particle particles[];
             } p;
             
@@ -151,7 +148,7 @@ mod pfs {
     }
 }
 
-pub struct Renderer {
+ pub struct Renderer {
     // Window 
     instance: Arc<Instance>,
     window: Arc<Window>,
@@ -165,8 +162,6 @@ pub struct Renderer {
     move_sensitivity: f32,
     mouse_sensitivity: f32,
     fov_step: f32,
-    descriptor_set: Arc<PersistentDescriptorSet>,
-    mvp_buffer: Arc<Subbuffer<[f32]>>,
 
     // Render buffers
     std_memory_allocator: Arc<StandardMemoryAllocator>,
@@ -184,7 +179,12 @@ pub struct Renderer {
 
     // Command buffer stuff
     cmd_buffer_allocator: StandardCommandBufferAllocator,
-    secondary_cmd_buffers: Vec<Arc<dyn SecondaryCommandBufferAbstract>>
+    secondary_cmd_buffers: Vec<Arc<dyn SecondaryCommandBufferAbstract>>,
+
+    // Command flags
+    pub reset_flag: bool,
+    pub stop_flag: bool,
+    pub showcase_flag: bool
 }
 
 impl Renderer {
@@ -372,35 +372,6 @@ impl Renderer {
             }
         ).unwrap();
 
-        let mvp_buffer = Arc::new(
-            Buffer::new_slice::<f32>(
-                mem_allocator.clone(),
-                BufferCreateInfo {
-                    usage: BufferUsage::UNIFORM_BUFFER,
-                    ..Default::default()
-                },
-                AllocationCreateInfo {
-                    memory_type_filter: MemoryTypeFilter::PREFER_DEVICE | MemoryTypeFilter::HOST_SEQUENTIAL_WRITE,
-                    ..Default::default()
-                },
-                4 * 4 * 2 
-            ).unwrap()
-        );
-
-        let descriptor_set_allocator = 
-            StandardDescriptorSetAllocator::new(device.clone(), Default::default());
-
-        let vs_layout = layout.set_layouts().get(0).unwrap();
-    
-        let descriptor_set = PersistentDescriptorSet::new(
-            &descriptor_set_allocator,
-            vs_layout.clone(),
-            [
-                WriteDescriptorSet::buffer(0, (*mvp_buffer).clone())
-            ],
-            []
-        ).unwrap();
-
         // Create the command buffer
         let cmd_buffer_allocator = 
             StandardCommandBufferAllocator::new(device.clone(), StandardCommandBufferAllocatorCreateInfo {secondary_buffer_count: 32, ..Default::default()}); 
@@ -429,14 +400,15 @@ impl Renderer {
             obj_pipeline,
             particle_pipeline,
             render_queue,
-            mvp_buffer,
             cmd_buffer_allocator,
             std_memory_allocator: mem_allocator,
-            descriptor_set,
             secondary_cmd_buffers: vec![],
             move_sensitivity: 0.5,
             mouse_sensitivity: 0.01,
-            fov_step: 5.0
+            fov_step: 5.0,
+            reset_flag: false,
+            stop_flag: false,
+            showcase_flag: false
         }
     }
 
@@ -445,9 +417,14 @@ impl Renderer {
 
             Some(winit::event::VirtualKeyCode::W) => {
                 let current_position = self.scene_camera.get_position();
-                let ahead = self.scene_camera.get_orientation();
 
-                self.scene_camera.set_position(current_position + (self.move_sensitivity * *ahead));
+                let aheadXZ = { 
+                    let mut tmp = self.scene_camera.get_orientation(); 
+                    tmp.y = 0.0;
+                    tmp
+                };
+
+                self.scene_camera.set_position(current_position + (self.move_sensitivity * aheadXZ));
             }
 
             Some(winit::event::VirtualKeyCode::A) => {
@@ -462,9 +439,14 @@ impl Renderer {
 
             Some(winit::event::VirtualKeyCode::S) => {
                 let current_position = self.scene_camera.get_position();
-                let ahead = self.scene_camera.get_orientation();
                 
-                self.scene_camera.set_position(current_position - (self.move_sensitivity * *ahead)); 
+                let aheadXZ = { 
+                    let mut tmp = self.scene_camera.get_orientation(); 
+                    tmp.y = 0.0;
+                    tmp
+                };
+                
+                self.scene_camera.set_position(current_position - (self.move_sensitivity * aheadXZ)); 
             }
 
             Some(winit::event::VirtualKeyCode::D) => {
@@ -484,11 +466,23 @@ impl Renderer {
                 self.scene_camera.set_position(current_position + (self.move_sensitivity * up));
             }
 
-            Some(winit::event::VirtualKeyCode::Z) => {
+            Some(winit::event::VirtualKeyCode::LShift) => {
                 let current_position = self.scene_camera.get_position();
                 let up = Vector3::new(0.0, 1.0, 0.0);
 
                 self.scene_camera.set_position(current_position - (self.move_sensitivity * up));
+            }
+
+            Some(winit::event::VirtualKeyCode::R) => {
+                self.reset_flag = true;
+            }
+
+            Some(winit::event::VirtualKeyCode::C) => {
+                self.stop_flag ^= true;
+            }
+
+            Some(winit::event::VirtualKeyCode::T) => {
+                self.showcase_flag ^= true;
             }
             
             _ => {
@@ -522,7 +516,7 @@ impl Renderer {
 
         let change = self.mouse_sensitivity * scaling_factor * (dx + dy);
 
-        self.scene_camera.set_orientation(Unit::new_normalize(ahead.into_inner() + change));
+        self.scene_camera.set_orientation((ahead + change).normalize());
     }
 
     pub fn handle_mwheel_events(&mut self, dw: f32) {
@@ -589,13 +583,6 @@ impl Renderer {
     }
 
     pub fn begin(&mut self) -> Box<dyn GpuFuture> {
-        // Set up camera matrices and data
-        let vp = self.scene_camera.vp();
-        let model_identity = Matrix4::<f32>::identity();
-        
-        self.mvp_buffer.write().unwrap()[0..vp.len()].copy_from_slice(vp.as_slice());
-        self.mvp_buffer.write().unwrap()[vp.len()..vp.len()+model_identity.len()].copy_from_slice(model_identity.as_slice());
-        
         // Acquire the next image in the swapchain
         let (image_index, _, future) = acquire_next_image(self.swapchain.clone(), None).expect("eddu failed :(");
         
@@ -614,11 +601,20 @@ impl Renderer {
             &descriptor_set_allocator,
             pvs_layout.clone(),
             [
-                WriteDescriptorSet::buffer(0, (*self.mvp_buffer).clone()),
-                WriteDescriptorSet::buffer(1, (*particle_models).clone())
+                WriteDescriptorSet::buffer(0, (*particle_models).clone())
             ],
             []
         ).unwrap();
+        
+        #[repr(C)]
+        #[derive(BufferContents)]
+        struct PushConstants {
+            vp: [f32; 16]
+        }
+
+        let push_constants = PushConstants {
+            vp: self.scene_camera.vp().as_slice().try_into().unwrap()
+        };
 
         // Create the command builder
         let mut cmd_builder = AutoCommandBufferBuilder::secondary(
@@ -641,6 +637,7 @@ impl Renderer {
                 0,
                 vec![p_descriptor_set.clone()]
             ).unwrap()
+            .push_constants(self.particle_pipeline.layout().clone(), 0, push_constants).unwrap()
             .bind_vertex_buffers(0, sphere.get_vertex_buffer().clone()).unwrap()
             .bind_index_buffer(sphere.get_index_buffer().clone()).unwrap()
             .draw_indexed(sphere.len() as u32, particles as u32, 0, 0, 0).unwrap();
@@ -652,9 +649,6 @@ impl Renderer {
 
     pub fn draw(&mut self, obj: &Mesh) {
         let model = obj.get_model_matrix();
-        let vp_buffer_offset = 4 * 4;
-
-        self.mvp_buffer.write().unwrap()[vp_buffer_offset..vp_buffer_offset + model.len()].copy_from_slice(model.as_slice());
 
         // Create the command builder
         let mut cmd_builder = AutoCommandBufferBuilder::secondary(
@@ -666,17 +660,24 @@ impl Renderer {
                 ..Default::default()
             }
         ).unwrap();
+        
+        #[repr(C)]
+        #[derive(BufferContents)]
+        struct PushConstants {
+            vp: [f32; 16],
+            model: [f32; 16]
+        }
+
+        let push_constants = PushConstants {
+            vp: self.scene_camera.vp().as_slice().try_into().unwrap(),
+            model: model.as_slice().try_into().unwrap()
+        };
 
         // Record commands
         cmd_builder
             .set_viewport(0, [self.viewport.clone()].into_iter().collect()).unwrap()
             .bind_pipeline_graphics(self.obj_pipeline.clone()).unwrap()
-            .bind_descriptor_sets(
-                PipelineBindPoint::Graphics,
-                self.obj_pipeline.layout().clone(),
-                0,
-                vec![self.descriptor_set.clone()]
-            ).unwrap()
+            .push_constants(self.obj_pipeline.layout().clone(), 0, push_constants).unwrap() 
             .bind_vertex_buffers(0, obj.get_vertex_buffer().clone()).unwrap()
             .bind_index_buffer(obj.get_index_buffer().clone()).unwrap()
             .draw_indexed(obj.len() as u32, 1, 0, 0, 0).unwrap();
@@ -721,13 +722,13 @@ impl Renderer {
 
         let cmd = cmd_builder.build().unwrap(); 
 
-        let edd = sync::now(self.device.clone()) 
+        let wait_future = sync::now(self.device.clone()) 
             .then_execute(self.render_queue.clone(), cmd).unwrap()
             .then_signal_fence_and_flush().unwrap();
 
-        edd.wait(None).unwrap();
+        wait_future.wait(None).unwrap();
         
-        let tmp = last_future 
+        let _ = last_future 
             .then_swapchain_present(
                 self.render_queue.clone(),
                 SwapchainPresentInfo::swapchain_image_index(self.swapchain.clone(), self.acquired_image)

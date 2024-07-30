@@ -23,6 +23,7 @@ mod density {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
 pub struct Particle {
     pub position: Vector3<f32>,
     pub velocity: Vector3<f32>,
@@ -65,20 +66,6 @@ impl Particle {
             new_position.y = bounds.y1 + SMOOTHING_RADIUS;
         }
 
-        // if new_position.x <= bounds.x1 || new_position.x >= bounds.x2 || 
-        //     new_position.z <= bounds.z1 || new_position.z >= bounds.z2 ||
-        //     new_position.y <= bounds.y1 
-        // { 
-        //     self.velocity *= -1.0 * (1.0 - bounds.damping_factor);
-        //
-        //     step = dt * self.velocity;
-        //     // if step.x.abs() <= 0.05 { step.x = 0.0; }
-        //     // if step.y.abs() <= 0.05 { step.y = 0.0; }
-        //     // if step.z.abs() <= 0.05 { step.z = 0.0; }
-        //
-        //     new_position = self.position + step;
-        // }
-        
         self.position = new_position;
     }
 
@@ -126,20 +113,7 @@ pub struct BoundingBox {
     pub y1: f32,
     pub y2: f32,
     
-    pub damping_factor: f32 // Between 0 and 1 (ideally 0.1 and 0.4)
-}
-
-impl BoundingBox {
-    pub fn edge_collision(&self, position: Vector3<f32>, threshold: f32) -> bool {
-        return ((self.x1 - threshold <= position.x && position.x <= self.x1) ||
-                (self.x2 <= position.x && position.x <= self.x2 + threshold) ||
-
-                (self.z1 - threshold <= position.z && position.z <= self.z1) ||
-                (self.z2 <= position.z && position.z <= self.z2 + threshold) ||
-
-                (self.y1 - threshold <= position.y && position.y <= self.y1)) 
-                && (position.y <= self.y2);
-    }
+    pub damping_factor: f32 // Between 0 and 1 (ideally 0.5 and 0.7)
 }
 
 pub struct Fluid {
@@ -148,15 +122,17 @@ pub struct Fluid {
     particles: Vec<Particle>,
     target_density: f32,
     pressure_constant: f32,
+    viscosity_constant: f32,
 
     model_buffer: Subbuffer<[f32]>,
+
     compute_particle_buffer: Option<Subbuffer<[f32]>>,
     compute_density_set: Option<Arc<PersistentDescriptorSet>>,
     compute_update_set: Option<Arc<PersistentDescriptorSet>>
 }
 
 impl Fluid {
-    pub fn new(particles: Vec<Particle>, target_density: f32, pressure: f32, device: Arc<Device>) -> Self {
+    pub fn new(particles: Vec<Particle>, target_density: f32, pressure_constant: f32, viscosity_constant: f32, device: Arc<Device>) -> Self {
         let memory_allocator = Arc::new(StandardMemoryAllocator::new_default(device.clone()));
 
         let matrices_buffer = 
@@ -173,7 +149,7 @@ impl Fluid {
                 (particles.len() * (16)) as u64 
             ).unwrap();
         
-        Fluid { device, particles, target_density, pressure_constant: pressure, model_buffer: matrices_buffer, compute_density_set: None, compute_update_set: None, compute_particle_buffer: None }
+        Fluid { device, particles, target_density, pressure_constant, viscosity_constant, model_buffer: matrices_buffer, compute_density_set: None, compute_update_set: None, compute_particle_buffer: None }
     }
 
     pub fn update(&mut self, dt: f32, bounds: &BoundingBox) -> (&Subbuffer<[f32]>, u32) {
@@ -185,7 +161,8 @@ impl Fluid {
             densities.push(0.0);
 
             for j in 0..len {
-                if (i == j) {continue;}
+                if i == j {continue;}
+
                 let particle = &self.particles[i];
                 let other    = &self.particles[j];
                 
@@ -217,23 +194,22 @@ impl Fluid {
 
                 let contribution = -dir * PARTICLE_MASS * (self.convert_density_pressure(density) + self.convert_density_pressure(other_density)) / (2.0 * other_density) * smoothing_kernel_derivative(dist, SMOOTHING_RADIUS);
 
-                // let contribution = PARTICLE_MASS * (self.convert_density_pressure(density) + self.convert_density_pressure(other_density)) / (2.0 * other_density) * dir * smoothing_kernel_derivative(dist, SMOOTHING_RADIUS);
-
                 pressure_force += contribution;  
             }
 
             let particle = &mut self.particles[i];
-            // if (densities[i] == 0.0) {continue;}
             let accel = pressure_force / densities[i];
 
             particle.update_accel(GRAVITY + accel);
             particle.update(dt, bounds);
 
-            // let particle_velocity_uv = particle.velocity.norm() / 20.0;
+            let particle_velocity_uv = particle.velocity.norm() / 20.0;
             let offset = i * (16);
 
-            self.model_buffer.write().unwrap()[offset..offset+16].copy_from_slice(Matrix4::new_translation(&particle.position).as_slice());
-            // self.model_buffer.write().unwrap()[offset+16..offset+20].copy_from_slice(Vector4::repeat(particle_velocity_uv).as_slice());
+            let mut translation_uv = Matrix4::new_translation(&particle.position);
+            translation_uv[(0, 0)] = particle_velocity_uv;
+
+            self.model_buffer.write().unwrap()[offset..offset+16].copy_from_slice(translation_uv.as_slice());
         }
 
         (&self.model_buffer, len as u32)
@@ -306,6 +282,10 @@ impl Fluid {
             ).unwrap()
         );
     }
+
+    pub fn reset(&mut self, particles: Vec<Particle>) {
+        self.particles = particles;
+    }
     
     pub fn density(&self) -> f32 {
         self.target_density
@@ -313,6 +293,10 @@ impl Fluid {
 
     pub fn pressure(&self) -> f32 {
         self.pressure_constant
+    }
+
+    pub fn viscosity(&self) -> f32 {
+        self.viscosity_constant
     }
 
     pub fn update_descriptor(&self) -> Arc<PersistentDescriptorSet> {
@@ -334,18 +318,6 @@ impl Fluid {
     fn convert_density_pressure(&self, density: f32) -> f32 {
         (density - self.target_density) * self.pressure_constant
     }
-}
-
-#[repr(C)]
-#[derive(Default, Copy, Clone)]
-pub struct PushConstants {
-    size: u32,
-    particle_mass: f32,
-    smoothing_radius: f32,
-    target_density: f32,
-    pressure_multiplier: f32,
-    dt: f32,
-    bounds: BoundingBox
 }
 
 pub struct FluidComputePipeline {
@@ -413,12 +385,19 @@ impl FluidComputePipeline {
             CommandBufferUsage::OneTimeSubmit
         ).unwrap();
 
-        let push_constants = cs::Constants { 
+        let density_push_constants = density::Constants { 
+            size: fluid.len(), 
+            particle_mass: PARTICLE_MASS, 
+            smoothing_radius: SMOOTHING_RADIUS,
+        };
+
+        let compute_push_constants = cs::Constants { 
             size: fluid.len(), 
             particle_mass: PARTICLE_MASS, 
             smoothing_radius: SMOOTHING_RADIUS, 
             target_density: fluid.density(), 
-            pressure_multiplier: fluid.pressure(), 
+            pressure_constant: fluid.pressure(),
+            viscosity_constant: fluid.viscosity(),
             dt: dt.into(), 
             bounds: cs::BoundingBox { x1: bounds.x1, x2: bounds.x2, z1: bounds.z1, z2: bounds.z2, y1: bounds.y1, y2: bounds.y2, damping_factor: bounds.damping_factor }
         };
@@ -431,8 +410,8 @@ impl FluidComputePipeline {
                 0, 
                 vec![fluid.density_descriptor()]
             ).unwrap()
-            .push_constants(self.density_layout.clone(), 0, push_constants).unwrap()
-            .dispatch([2048, 1, 1]).unwrap();
+            .push_constants(self.density_layout.clone(), 0, density_push_constants).unwrap()
+            .dispatch([3000, 1, 1]).unwrap();
 
         let cmd_buffer = density_builder.build().unwrap();
 
@@ -444,7 +423,7 @@ impl FluidComputePipeline {
                 0, 
                 vec![fluid.update_descriptor()]
             ).unwrap()
-            .push_constants(self.update_layout.clone(), 0, push_constants).unwrap()
+            .push_constants(self.update_layout.clone(), 0, compute_push_constants).unwrap()
             .dispatch([2048, 1, 1]).unwrap();
 
         let cmd_buffer_2 = update_builder.build().unwrap();
@@ -461,21 +440,17 @@ impl FluidComputePipeline {
 }
 
 pub fn smoothing_kernel(dist: f32, radius: f32) -> f32 {
-    // if (dist >= radius) {
-    //     return 0.0;
-    // }
+    if (dist >= radius) {
+        return 0.0;
+    }
 
     return 315.0 / (64.0 * std::f32::consts::PI * radius.powi(9)) * (radius * radius - dist * dist).powi(3);
 }
 
 pub fn smoothing_kernel_derivative(dist: f32, radius: f32) -> f32 {
-    // if (dist >= radius) {
-    //     return 0.0;
-    // } 
+    if (dist >= radius) {
+        return 0.0;
+    } 
 
     return -45.0 / (std::f32::consts::PI * radius.powi(6)) * (radius - dist) * (radius - dist);
-}
-
-pub fn smoothing_sphere_volume(radius: f32) -> f32 {
-    2.0
 }

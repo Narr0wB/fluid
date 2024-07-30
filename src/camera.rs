@@ -6,7 +6,8 @@ const UP: Vector3<f32> = Vector3::new(0.0, 1.0, 0.0);
 
 pub struct Camera {
     position: Vector3<f32>,
-    orientation: Unit<Vector3<f32>>,
+    orientation: Vector3<f32>,
+
     aspect_ratio: f32,
     zfar: f32,
     znear: f32,
@@ -14,26 +15,26 @@ pub struct Camera {
 }
 
 impl Camera {
-    pub fn new(position: Vector3<f32>, orientation: Unit<Vector3<f32>>, aspect_ratio: Option<f32>, fov: f32) -> Self {
+    pub fn new(position: Vector3<f32>, orientation: Vector3<f32>, aspect_ratio: Option<f32>, fov: f32) -> Self {
         Camera { position, orientation, aspect_ratio: aspect_ratio.unwrap_or(16.0 / 9.0), zfar: 100.0, znear: 1.0, fov }
     }
 
     pub fn set_target(&mut self, camera_target: Vector3<f32>) {
-        self.orientation = Unit::new_normalize(camera_target - self.position);
+        self.orientation = (camera_target - self.position).normalize();
     }
 
     pub fn set_position(&mut self, camera_position: Vector3<f32>) {
         self.position = camera_position;
     }
 
-    pub fn set_orientation(&mut self, camera_orientation: Unit<Vector3<f32>>) {
-        if self.orientation.into_inner().cross(&camera_orientation.into_inner()).norm() < 0.0001 { return; }
+    pub fn set_orientation(&mut self, camera_orientation: Vector3<f32>) {
+        if self.orientation.cross(&camera_orientation).norm() < 0.0001 { return; }
 
         self.orientation = camera_orientation;
     }
 
     pub fn set_fov(&mut self, fov: f32) {
-        if fov > 90.0 || fov < 0.0 { return; }
+        if fov >= 90.0 || fov <= 10.0 { return; }
 
         self.fov = fov;
     }
@@ -46,7 +47,7 @@ impl Camera {
         self.position
     }
 
-    pub fn get_orientation(&self) -> Unit<Vector3<f32>> {
+    pub fn get_orientation(&self) -> Vector3<f32> {
         self.orientation
     }
 
@@ -58,8 +59,6 @@ impl Camera {
         let right_vector: Vector3<f32> = UP.cross(&self.orientation).normalize();
         let up_vector: Vector3<f32> = right_vector.cross(&self.orientation).normalize();
 
-        // println!("{:?} {:?}", right_vector, up_vector);
-        
         let rotation = Matrix4::from_rows(&[
             RowVector4::new(right_vector.x,     right_vector.y,     right_vector.z,     0.0),
             RowVector4::new(up_vector.x,        up_vector.y,        up_vector.z,        0.0),
@@ -82,16 +81,12 @@ impl Camera {
         let lambda: f32 = self.zfar / (self.zfar - self.znear);
         let lambda2: f32 = -(self.zfar * self.znear) / (self.zfar - self.znear);
 
-        // println!("{}", fov_factor);
-
         let p = Matrix4::from_rows(&[
             RowVector4::new(self.aspect_ratio * fov_factor, 0.0, 0.0, 0.0),
             RowVector4::new(0.0, fov_factor, 0.0, 0.0),
             RowVector4::new(0.0, 0.0, lambda, lambda2),
             RowVector4::new(0.0, 0.0, 1.0, 0.0)
         ]);
-
-        // let proj = Perspective3::new(1.0 / self.aspect_ratio, 3.14 / 12.0, 1.0, 1000.0).as_matrix().transpose().clone();
 
         return p;
     }

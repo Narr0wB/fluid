@@ -121,11 +121,10 @@ fn main() {
     .unwrap();
 
     let graphics_queue = queues.next().unwrap();
-    let memory_allocator = Arc::new(StandardMemoryAllocator::new_default(device.clone()));
 
     let mut camera = Camera::new(
-        Vector3::new(5.0, 7.0, 0.0),                       // position
-        Unit::new_normalize(Vector3::new(0.0, 0.0, 1.0)),   // orientation
+        Vector3::new(5.0, 7.0, 0.0),                        // position
+        Vector3::new(0.0, 0.0, 1.0),                        // orientation
         None,                                               // aspect_ratio
         30.0                                                // FOV
     );
@@ -153,28 +152,35 @@ fn main() {
     ]; 
     
     let model_matrix = Matrix4::new_scaling(5.0);
-     
-    let mesh = Mesh::new(memory_allocator.clone(), vertices, indices, model_matrix); 
+    let bounding_box = Mesh::new(vertices, indices, model_matrix, device.clone()); 
 
-    // let mut current_angle: f32 = 0.0;
-    // let rotation_speed: f33 = 2.0 * std::f32::consts::PI / 1000.0;
-    let mut last_position_cursor = None::<PhysicalPosition<f64>>;
-
-    let mut capturing_mouse_input = false;
-    let sphere = create_sphere(SMOOTHING_RADIUS / 2.0, Vector3::new(0.0, 0.0, 0.0), 10, memory_allocator.clone());
+    let sphere = create_sphere(SMOOTHING_RADIUS / 2.0, Vector3::new(0.0, 0.0, 0.0), 10, device.clone());
     
     let particles = particle_cube(Vector3::new(2.5, 0.0, 2.5), 30);
-    let mut fluid = Fluid::new(particles, 30.0, 0.8, device.clone());
+
+    let mut fluid = Fluid::new(particles, 30.0, 2.5, 1.2, device.clone());
     let compute_pipeline = FluidComputePipeline::new(device.clone());
 
     // Bind the fluid to the compute pipeline
     fluid.bind_compute(&compute_pipeline);
-
-    let mut frame_time = 0.0;
+    
     let mut angle = 0.0;
-
+    let mut frame_time = 0.0;
+    let mut capturing_mouse_input = false;
+    let mut last_position_cursor = None::<PhysicalPosition<f64>>;
+    
     event_loop.run(move |event, _, control_flow| {
-        let before = Instant::now(); 
+        let before = Instant::now();
+        
+        if renderer.reset_flag {
+            let new_particles = particle_cube(Vector3::new(2.5, 0.0, 2.5), 30);
+            fluid.reset(new_particles);
+            fluid.bind_compute(&compute_pipeline);
+
+            compute_pipeline.compute(0.005, &fluid, &BoundingBox { x1: 0.0, x2: 5.0, z1: 0.0, z2: 5.0, y1: 0.0, y2: 10.0, damping_factor: 0.5 }, graphics_queue.clone());
+            
+            renderer.reset_flag = false;
+        }
 
         match event {
             // Handle keyboard movement (WASD)
@@ -244,30 +250,29 @@ fn main() {
                 renderer.recreate_swapchain();
             }
             Event::RedrawEventsCleared => {
-                // let before = Instant::now();
-                // let (buffer, num_particles) = fluid.update(0.01, &BoundingBox { x1: 0.0, x2: 5.0, z1: 0.0, z2: 5.0, y1: 0.0, y2: 5.0, damping_factor: 0.7 });
-                // println!("it took {:.2?}", before.elapsed());
-                
-                // let (buffer, num_particles) = fluid.update(1.0 / 120.0, &BoundingBox { x1: 0.0, x2: 5.0, z1: 0.0, z2: 5.0, y1: 0.0, y2: 10.0, damping_factor: 0.5 });
-                let (buffer, num_particles) = compute_pipeline.compute(0.01, &fluid, &BoundingBox { x1: 0.0, x2: 5.0, z1: 0.0, z2: 5.0, y1: 0.0, y2: 10.0, damping_factor: 0.5 }, graphics_queue.clone());
+                let mut buffer = fluid.models(); 
+                let mut num_particles = fluid.len();
+
+                if !renderer.stop_flag {    
+                    (buffer, num_particles) = compute_pipeline.compute(0.005, &fluid, &BoundingBox { x1: 0.0, x2: 5.0, z1: 0.0, z2: 5.0, y1: 0.0, y2: 10.0, damping_factor: 0.7 }, graphics_queue.clone());
+                }
 
                 let first = renderer.begin();
                 
-                renderer.draw(&mesh);
-                // renderer.draw(&sphere);
+                renderer.draw(&bounding_box);
                 renderer.draw_particles(&sphere, buffer, num_particles);
-                
                 renderer.end(first);
+
                 frame_time = before.elapsed().as_micros() as f32;
 
-                if (frame_time < 1.0 / 120.0) {
-                    std::thread::sleep(Duration::from_millis((1.0 / 120.0) as u64));
-                }
+                // if (frame_time < 1.0 / 120.0) {
+                //     std::thread::sleep(Duration::from_millis((1.0 / 120.0) as u64));
+                // }
 
                 angle += frame_time / 5_000_000.0;
 
-                renderer.scene_camera.set_position(Vector3::new(2.5 + 7.0 * angle.cos(), 4.0, 2.5 + 7.0 * angle.sin()));
-                renderer.scene_camera.set_target(Vector3::new(2.5, 2.5, 2.5));
+                // renderer.scene_camera.set_position(Vector3::new(2.5 + 7.0 * angle.cos(), 4.0, 2.5 + 7.0 * angle.sin()));
+                // renderer.scene_camera.set_target(Vector3::new(2.5, 2.5, 2.5));
                 println!("fps {:?} {:?}", 1.0 / (frame_time / 1_000_000_f32), before.elapsed()); 
             }
             _ => ()
