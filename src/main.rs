@@ -1,28 +1,10 @@
-#[allow(unused_imports)]
 
-use std::sync::Arc;
-use fluid::{particle_cube, BoundingBox, Fluid, PARTICLE_RADIUS, SMOOTHING_RADIUS};
-use vulkano::buffer::allocator::{SubbufferAllocator, SubbufferAllocatorCreateInfo};
-use vulkano::format::Format;
-use vulkano::descriptor_set::{allocator::StandardDescriptorSetAllocator, PersistentDescriptorSet, WriteDescriptorSet};
 use vulkano::device::{Device, Features, DeviceExtensions, physical::PhysicalDeviceType, DeviceCreateInfo, QueueCreateInfo, QueueFlags};
-use vulkano::buffer::{Buffer, BufferContents, BufferCreateInfo, BufferUsage};
-use vulkano::command_buffer::{allocator::StandardCommandBufferAllocator, AutoCommandBufferBuilder, CommandBufferUsage, RenderPassBeginInfo, SubpassBeginInfo, SubpassContents};
-use vulkano::half::vec::HalfFloatVecExt;
-use vulkano::image::{view::ImageView, Image, ImageCreateInfo, ImageType, ImageUsage};
-use vulkano::memory::allocator::{AllocationCreateInfo, MemoryTypeFilter, StandardMemoryAllocator};
 use vulkano::instance::{Instance, InstanceCreateFlags, InstanceCreateInfo};
-use vulkano::pipeline::graphics::{color_blend::{ColorBlendAttachmentState, ColorBlendState}, input_assembly::InputAssemblyState, multisample::MultisampleState, rasterization::RasterizationState,
-    vertex_input::{VertexDefinition}, viewport::{Viewport, ViewportState}, GraphicsPipelineCreateInfo, depth_stencil::{DepthState, DepthStencilState}};
-use vulkano::pipeline::PipelineBindPoint;
-use vulkano::pipeline::{layout::PipelineDescriptorSetLayoutCreateInfo, DynamicState, GraphicsPipeline, PipelineLayout, PipelineShaderStageCreateInfo};
-use vulkano::render_pass::{Framebuffer, FramebufferCreateInfo, Subpass};
-use vulkano::swapchain::{acquire_next_image, Surface, Swapchain, SwapchainCreateInfo, SwapchainPresentInfo};
-use vulkano::sync::{self, GpuFuture};
-use vulkano::descriptor_set::layout::{DescriptorSetLayout, DescriptorType, DescriptorSetLayoutBinding};
-use vulkano::{memory, Validated, VulkanError, VulkanLibrary};
+use vulkano::swapchain::Surface;
+use vulkano::VulkanLibrary;
 use winit::dpi::PhysicalPosition;
-use winit::event::{ElementState, KeyboardInput, MouseButton, MouseScrollDelta, ScanCode, VirtualKeyCode};
+use winit::event::{ElementState, KeyboardInput, MouseButton, MouseScrollDelta};
 
 use nalgebra::{*};
 
@@ -34,11 +16,11 @@ mod fluid;
 use crate::camera::Camera;
 use crate::renderer::Renderer;
 use crate::mesh::{*};
-use crate::fluid::{FluidComputePipeline, Particle};
+use crate::fluid::{FluidComputePipeline, particle_cube, BoundingBox, Fluid, SMOOTHING_RADIUS};
 
-use winit::{event::{Event, WindowEvent}, event_loop::{ControlFlow, EventLoop}, window::*};
+use winit::{event::{Event, WindowEvent}, event_loop::{ControlFlow, EventLoop}};
 
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::Instant;
 
 fn main() {
     let event_loop = EventLoop::new();
@@ -163,8 +145,7 @@ fn main() {
 
     // Bind the fluid to the compute pipeline
     fluid.bind_compute(&compute_pipeline);
-    
-    let mut angle = 0.0;
+   
     let mut frame_time = 0.0;
     let mut capturing_mouse_input = false;
     let mut last_position_cursor = None::<PhysicalPosition<f64>>;
@@ -265,21 +246,9 @@ fn main() {
 
                 frame_time = before.elapsed().as_micros() as f32;
 
-                // if (frame_time < 1.0 / 120.0) {
-                //     std::thread::sleep(Duration::from_millis((1.0 / 120.0) as u64));
-                // }
-
-                angle += frame_time / 5_000_000.0;
-
-                // renderer.scene_camera.set_position(Vector3::new(2.5 + 7.0 * angle.cos(), 4.0, 2.5 + 7.0 * angle.sin()));
-                // renderer.scene_camera.set_target(Vector3::new(2.5, 2.5, 2.5));
                 println!("fps {:?} {:?}", 1.0 / (frame_time / 1_000_000_f32), before.elapsed()); 
             }
             _ => ()
         }
     });
-
-    // println!("odio gli zingari!");
-    // println!("eddu gaming");
-    
 }

@@ -12,3 +12,9 @@ struct Particle {
 layout(std140, binding = 0) buffer Particles {
     Particle particles[];
 } p;
+
+const vec3 min_grid = vec3(-1.0, -1.0, -1.0);
+
+uint hash_func(uint idx_x, uint idx_y, uint idx_z) {
+    return idx_x + idx_y * 5741 + idx_z * 6547;
+}
