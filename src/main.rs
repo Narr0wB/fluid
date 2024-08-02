@@ -105,10 +105,10 @@ fn main() {
     let graphics_queue = queues.next().unwrap();
 
     let mut camera = Camera::new(
-        Vector3::new(5.0, 7.0, 0.0),                        // position
-        Vector3::new(0.0, 0.0, 1.0),                        // orientation
-        None,                                               // aspect_ratio
-        30.0                                                // FOV
+        Vector3::new(5.0, 7.0, 0.0),                   // position
+        Vector3::new(0.0, 0.0, 1.0),                // orientation
+        None,                                              // aspect_ratio
+        30.0                                                        // FOV
     );
 
     camera.set_target(Vector3::new(2.5, 2.5, 2.5));
@@ -138,9 +138,9 @@ fn main() {
 
     let sphere = create_sphere(SMOOTHING_RADIUS / 2.0, Vector3::new(0.0, 0.0, 0.0), 10, device.clone());
     
-    let particles = particle_cube(Vector3::new(2.5, 0.0, 2.5), 30);
+    let particles = particle_cube(Vector3::new(2.2, 0.0, 2.2), 30);
 
-    let mut fluid = Fluid::new(particles, 30.0, 2.5, 1.2, device.clone());
+    let mut fluid = Fluid::new(particles.clone(), 30.0, 2.0, 0.6, device.clone());
     let compute_pipeline = FluidComputePipeline::new(device.clone());
 
     // Bind the fluid to the compute pipeline
@@ -154,8 +154,8 @@ fn main() {
         let before = Instant::now();
         
         if renderer.reset_flag {
-            let new_particles = particle_cube(Vector3::new(2.5, 0.0, 2.5), 30);
-            fluid.reset(new_particles);
+            // let new_particles = particle_cube(Vector3::new(2.5, 0.0, 2.5), 30);
+            fluid.reset(particles.clone());
             fluid.bind_compute(&compute_pipeline);
 
             compute_pipeline.compute(0.005, &fluid, &BoundingBox { x1: 0.0, x2: 5.0, z1: 0.0, z2: 5.0, y1: 0.0, y2: 10.0, damping_factor: 0.5 }, graphics_queue.clone());
