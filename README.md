@@ -6,6 +6,10 @@
 
 This is a demo of a particle-based fluid simulation using the SPH method. All the rendering and computing is done through Vulkan using the vulkano crate.
 
+## Demo
+
+![Vidio](https://github.com/user-attachments/assets/caa04ef4-c3f9-46fb-a453-2499a5567879)
+
 ## Controls
 
 - To move around the simulation use the [**W A S D Space LShift**] keys
