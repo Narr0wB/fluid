@@ -106,17 +106,10 @@ fn main() {
     let graphics_queue = queues.next().unwrap();
 
     let mut camera = Camera::new(
-<<<<<<< HEAD
         Vector3::new(10.0, 5.0, -3.0),                      // position
         Vector3::new(0.0, 0.0, 1.0),                        // orientation
         None,                                               // aspect_ratio
         30.0                                                // FOV
-=======
-        Vector3::new(5.0, 7.0, 0.0),                   // position
-        Vector3::new(0.0, 0.0, 1.0),                // orientation
-        None,                                              // aspect_ratio
-        30.0                                                        // FOV
->>>>>>> f942db45a67d3520e2ee81803c67cd87a6b37fe5
     );
 
     camera.set_target(Vector3::new(2.5, 2.5, 2.5));
