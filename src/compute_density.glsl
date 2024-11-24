@@ -63,7 +63,8 @@ void main() {
         }
 
         barrier();
-
+        
+        // Add the contribution of the current particle to the calculation of the density at current position
         if (gl_LocalInvocationID.x == 0) {
             atomicAdd(p.particles[i].position.w, c.particle_mass * smoothing_kernel(0.0, c.smoothing_radius));
         }

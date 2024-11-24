@@ -1,4 +1,5 @@
 
+use fluid::PARTICLE_RADIUS;
 use vulkano::device::{Device, Features, DeviceExtensions, physical::PhysicalDeviceType, DeviceCreateInfo, QueueCreateInfo, QueueFlags};
 use vulkano::instance::{Instance, InstanceCreateFlags, InstanceCreateInfo};
 use vulkano::swapchain::Surface;
@@ -105,7 +106,7 @@ fn main() {
     let graphics_queue = queues.next().unwrap();
 
     let mut camera = Camera::new(
-        Vector3::new(5.0, 7.0, 0.0),                        // position
+        Vector3::new(10.0, 5.0, -3.0),                      // position
         Vector3::new(0.0, 0.0, 1.0),                        // orientation
         None,                                               // aspect_ratio
         30.0                                                // FOV
@@ -137,10 +138,10 @@ fn main() {
     let bounding_box = Mesh::new(vertices, indices, model_matrix, device.clone()); 
 
     let sphere = create_sphere(SMOOTHING_RADIUS / 2.0, Vector3::new(0.0, 0.0, 0.0), 10, device.clone());
-    
-    let particles = particle_cube(Vector3::new(2.5, 0.0, 2.5), 30);
+    let particles = particle_cube(SMOOTHING_RADIUS + 0.01, Vector3::new(1.0, 3.0, 1.0), 30);
 
-    let mut fluid = Fluid::new(particles, 30.0, 2.5, 1.2, device.clone());
+    let pressure_constant = 2.5;
+    let mut fluid = Fluid::new(particles.clone(), 30.0, pressure_constant, 1.2, device.clone());
     let compute_pipeline = FluidComputePipeline::new(device.clone());
 
     // Bind the fluid to the compute pipeline
@@ -149,16 +150,16 @@ fn main() {
     let mut frame_time = 0.0;
     let mut capturing_mouse_input = false;
     let mut last_position_cursor = None::<PhysicalPosition<f64>>;
+    let timestep = 0.005; 
     
     event_loop.run(move |event, _, control_flow| {
         let before = Instant::now();
         
         if renderer.reset_flag {
-            let new_particles = particle_cube(Vector3::new(2.5, 0.0, 2.5), 30);
-            fluid.reset(new_particles);
+            fluid.reset(particles.clone());
             fluid.bind_compute(&compute_pipeline);
 
-            compute_pipeline.compute(0.005, &fluid, &BoundingBox { x1: 0.0, x2: 5.0, z1: 0.0, z2: 5.0, y1: 0.0, y2: 10.0, damping_factor: 0.5 }, graphics_queue.clone());
+            compute_pipeline.compute(timestep, &fluid, &BoundingBox { x1: 0.0, x2: 5.0, z1: 0.0, z2: 5.0, y1: 0.0, y2: 10.0, damping_factor: 0.5 }, graphics_queue.clone());
             
             renderer.reset_flag = false;
         }
@@ -235,7 +236,7 @@ fn main() {
                 let mut num_particles = fluid.len();
 
                 if !renderer.stop_flag {    
-                    (buffer, num_particles) = compute_pipeline.compute(0.005, &fluid, &BoundingBox { x1: 0.0, x2: 5.0, z1: 0.0, z2: 5.0, y1: 0.0, y2: 10.0, damping_factor: 0.7 }, graphics_queue.clone());
+                    (buffer, num_particles) = compute_pipeline.compute(timestep, &fluid, &BoundingBox { x1: 0.0, x2: 5.0, z1: 0.0, z2: 5.0, y1: 0.0, y2: 10.0, damping_factor: 0.5 }, graphics_queue.clone());
                 }
 
                 let first = renderer.begin();

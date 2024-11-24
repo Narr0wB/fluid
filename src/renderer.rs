@@ -101,8 +101,8 @@ mod pvs {
 
             void main() {
                 mat4 model = p.particles[gl_InstanceIndex].model;
-                float color = model[0][0];
-                model[0][0] = 1.0;
+                float color = model[0][1];
+                model[0][1] = 0.0;
                 gl_Position = v.vp * model * vec4(position, 1.0);
                 param = vec4(color);
             }

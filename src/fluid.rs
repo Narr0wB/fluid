@@ -1,6 +1,6 @@
 use nalgebra::{*};
-use vulkano::{command_buffer::PrimaryCommandBufferAbstract, sync::GpuFuture};
-use std::{sync::Arc, time::Instant};
+use vulkano::sync::GpuFuture;
+use std::sync::Arc;
 use vulkano::{buffer::{Buffer, BufferCreateInfo, BufferUsage, Subbuffer}, command_buffer::{allocator::{CommandBufferAllocator, StandardCommandBufferAllocator}, AutoCommandBufferBuilder, CommandBufferUsage}, descriptor_set::{allocator::{DescriptorSetAllocator, StandardDescriptorSetAllocator}, PersistentDescriptorSet, WriteDescriptorSet}, device::{Device, Queue}, memory::allocator::{AllocationCreateInfo, MemoryTypeFilter, StandardMemoryAllocator}, pipeline::{compute::ComputePipelineCreateInfo, layout::PipelineDescriptorSetLayoutCreateInfo, ComputePipeline, PipelineBindPoint, PipelineLayout, PipelineShaderStageCreateInfo}, sync};
 use rand::Rng;
 
@@ -74,25 +74,28 @@ impl Particle {
     }
 }
 
-pub fn particle_cube(start: Vector3<f32>, side: u32) -> Vec<Particle> {
+pub fn particle_cube(dist: f32, start: Vector3<f32>, side: u32) -> Vec<Particle> {
     let mut p_cube = vec![];
 
-    let particle_separation = SMOOTHING_RADIUS + 0.01;
+    let particle_separation = dist;
 
     for i in 0..side {
         for j in 0..side {
             for k in 0..side {
-                let randX: f32 = (rand::thread_rng().gen::<f32>() * 0.5 - 1.0) * SMOOTHING_RADIUS / 10.0; 
-                let randY: f32 = (rand::thread_rng().gen::<f32>() * 0.5 - 1.0) * SMOOTHING_RADIUS / 10.0; 
-                let randZ: f32 = (rand::thread_rng().gen::<f32>() * 0.5 - 1.0) * SMOOTHING_RADIUS / 10.0;
+                let randX: f32 = (rand::thread_rng().gen::<f32>() * 0.5 - 1.0) * particle_separation; 
+                let randY: f32 = (rand::thread_rng().gen::<f32>() * 0.5 - 1.0) * particle_separation; 
+                let randZ: f32 = (rand::thread_rng().gen::<f32>() * 0.5 - 1.0) * particle_separation;
 
                 // println!("{:?} {:?} {:?}", randX, randY, randZ);
                 p_cube.push(
                     Particle::new(
                         Vector3::new(
                             start.x + (i as f32 * (particle_separation)) + randX - 1.5, 
-                            start.y + (k as f32 * (particle_separation)) + randY + SMOOTHING_RADIUS + 0.1,
-                            start.z + (j as f32 * (particle_separation)) + randZ - 1.5
+                            start.y + (k as f32 * (particle_separation)) + randY + particle_separation,
+                            start.z + (j as f32 * (particle_separation)) + randZ - 1.5,
+                            // start.x + (i as f32 * (particle_separation)), 
+                            // start.y + (k as f32 * (particle_separation)),
+                            // start.z + (j as f32 * (particle_separation))
                         ),
                         None
                     )
