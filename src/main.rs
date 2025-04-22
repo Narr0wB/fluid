@@ -1,5 +1,4 @@
 
-use fluid::PARTICLE_RADIUS;
 use vulkano::device::{Device, Features, DeviceExtensions, physical::PhysicalDeviceType, DeviceCreateInfo, QueueCreateInfo, QueueFlags};
 use vulkano::instance::{Instance, InstanceCreateFlags, InstanceCreateInfo};
 use vulkano::swapchain::Surface;
@@ -106,7 +105,7 @@ fn main() {
     let graphics_queue = queues.next().unwrap();
 
     let mut camera = Camera::new(
-        Vector3::new(10.0, 5.0, -3.0),                      // position
+        Vector3::new(8.0, 3.0, -5.0),                      // position
         Vector3::new(0.0, 0.0, 1.0),                        // orientation
         None,                                               // aspect_ratio
         30.0                                                // FOV
@@ -134,23 +133,30 @@ fn main() {
         0, 4, 1, 1, 5, 4
     ]; 
     
-    let model_matrix = Matrix4::new_scaling(5.0);
+    let model_matrix = Matrix4::new_scaling(3.0);
     let bounding_box = Mesh::new(vertices, indices, model_matrix, device.clone()); 
 
-    let sphere = create_sphere(SMOOTHING_RADIUS / 2.0, Vector3::new(0.0, 0.0, 0.0), 10, device.clone());
-    let particles = particle_cube(SMOOTHING_RADIUS + 0.01, Vector3::new(1.0, 3.0, 1.0), 30);
+    let pressure_constant = 3.0;
+    let density = 998.29;
+    let viscosity = 3.5;
+    let particle_radius = 2.0 * ((3.0 * fluid::PARTICLE_MASS) / (4.0*std::f32::consts::PI*998.29)).cbrt(); // m
 
-    let pressure_constant = 2.5;
-    let mut fluid = Fluid::new(particles.clone(), 30.0, pressure_constant, 1.2, device.clone());
-    let compute_pipeline = FluidComputePipeline::new(device.clone());
+    let sphere = create_sphere(particle_radius, Vector3::new(0.0, 0.0, 0.0), 10, device.clone());
+    let initial_particle_distance = f32::powf((4.0*particle_radius.powi(3)*f32::pi())/(3.0*50.0), 1.0/3.0) + 0.07;
+    println!("{} pr: {} sr: {}", initial_particle_distance, particle_radius, SMOOTHING_RADIUS);
+    let particles = particle_cube(initial_particle_distance, Vector3::new(2.0, 5.0, 2.0), Some(Vector3::new(0.5, 0.0, 0.5)), 30);
+
+
+    let mut fluid = Fluid::new(particles.clone(), density, pressure_constant, viscosity, device.clone());
 
     // Bind the fluid to the compute pipeline
+    let compute_pipeline = FluidComputePipeline::new(device.clone());
     fluid.bind_compute(&compute_pipeline);
    
     let mut frame_time = 0.0;
     let mut capturing_mouse_input = false;
     let mut last_position_cursor = None::<PhysicalPosition<f64>>;
-    let timestep = 0.005; 
+    let timestep = 0.01; 
     
     event_loop.run(move |event, _, control_flow| {
         let before = Instant::now();
@@ -236,7 +242,7 @@ fn main() {
                 let mut num_particles = fluid.len();
 
                 if !renderer.stop_flag {    
-                    (buffer, num_particles) = compute_pipeline.compute(timestep, &fluid, &BoundingBox { x1: 0.0, x2: 5.0, z1: 0.0, z2: 5.0, y1: 0.0, y2: 10.0, damping_factor: 0.5 }, graphics_queue.clone());
+                    (buffer, num_particles) = compute_pipeline.compute(timestep, &fluid, &BoundingBox { x1: 0.0, x2: 3.0, z1: 0.0, z2: 3.0, y1: 0.0, y2: 10.0, damping_factor: 0.5 }, graphics_queue.clone());
                 }
 
                 let first = renderer.begin();
@@ -247,7 +253,7 @@ fn main() {
 
                 frame_time = before.elapsed().as_micros() as f32;
 
-                println!("fps {:?} {:?}", 1.0 / (frame_time / 1_000_000_f32), before.elapsed()); 
+                // println!("fps {:?} {:?}", 1.0 / (frame_time / 1_000_000_f32), before.elapsed()); 
             }
             _ => ()
         }

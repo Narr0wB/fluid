@@ -1,0 +1,4 @@
+pub const PARTICLE_RADIUS: f32  = 0.0375; // m
+pub const PARTICLE_MASS: f32    = 0.02; // kg
+pub const SMOOTHING_RADIUS: f32 = 0.15; // m
+pub const GRAVITY: Vector3<f32> = Vector3::new(0.0, -9.81, 0.0);

@@ -4,15 +4,14 @@ use std::sync::Arc;
 use vulkano::{buffer::{Buffer, BufferCreateInfo, BufferUsage, Subbuffer}, command_buffer::{allocator::{CommandBufferAllocator, StandardCommandBufferAllocator}, AutoCommandBufferBuilder, CommandBufferUsage}, descriptor_set::{allocator::{DescriptorSetAllocator, StandardDescriptorSetAllocator}, PersistentDescriptorSet, WriteDescriptorSet}, device::{Device, Queue}, memory::allocator::{AllocationCreateInfo, MemoryTypeFilter, StandardMemoryAllocator}, pipeline::{compute::ComputePipelineCreateInfo, layout::PipelineDescriptorSetLayoutCreateInfo, ComputePipeline, PipelineBindPoint, PipelineLayout, PipelineShaderStageCreateInfo}, sync};
 use rand::Rng;
 
-pub const PARTICLE_RADIUS: f32  = 0.0375; // m
 pub const PARTICLE_MASS: f32    = 0.02; // kg
-pub const SMOOTHING_RADIUS: f32 = 0.15; // m
+pub const SMOOTHING_RADIUS: f32 = 2.0 * 0.0457; // m
 pub const GRAVITY: Vector3<f32> = Vector3::new(0.0, -9.81, 0.0);
 
-mod cs {
+mod pressure {
     vulkano_shaders::shader! {
         ty: "compute",
-        path: "src/compute.glsl" 
+        path: "src/compute_pressure.glsl" 
     }
 }
 
@@ -74,7 +73,7 @@ impl Particle {
     }
 }
 
-pub fn particle_cube(dist: f32, start: Vector3<f32>, side: u32) -> Vec<Particle> {
+pub fn particle_cube(dist: f32, start: Vector3<f32>, start_velocity: Option<Vector3<f32>>, side: u32) -> Vec<Particle> {
     let mut p_cube = vec![];
 
     let particle_separation = dist;
@@ -91,13 +90,13 @@ pub fn particle_cube(dist: f32, start: Vector3<f32>, side: u32) -> Vec<Particle>
                     Particle::new(
                         Vector3::new(
                             start.x + (i as f32 * (particle_separation)) + randX - 1.5, 
-                            start.y + (k as f32 * (particle_separation)) + randY + particle_separation,
+                            start.y + (k as f32 * (particle_separation)) + randY - 1.5,
                             start.z + (j as f32 * (particle_separation)) + randZ - 1.5,
                             // start.x + (i as f32 * (particle_separation)), 
                             // start.y + (k as f32 * (particle_separation)),
                             // start.z + (j as f32 * (particle_separation))
                         ),
-                        None
+                        start_velocity 
                     )
                 );
             }
@@ -221,7 +220,7 @@ impl Fluid {
     pub fn bind_compute(&mut self, pipeline: &FluidComputePipeline) {
         let memory_allocator = Arc::new(StandardMemoryAllocator::new_default(self.device.clone()));
 
-        let stride = 2 * 4;
+        let stride = 2 * 3 + 2;
         let len = self.particles.len();
 
         self.compute_particle_buffer = Some(
@@ -242,12 +241,12 @@ impl Fluid {
         for i in 0..len {
             let particle = &self.particles[i];
 
-            let position = Vector4::new(particle.position.x, particle.position.y, particle.position.z, 0.0);
-            let velocity = Vector4::new(particle.velocity.x, particle.velocity.y, particle.velocity.z, 0.0);
+            let position = Vector3::new(particle.position.x, particle.position.y, particle.position.z);
+            let velocity = Vector3::new(particle.velocity.x, particle.velocity.y, particle.velocity.z);
 
-            let final_slice = [position.as_slice(), velocity.as_slice()].concat();
+            let final_slice = [position.as_slice(), &[0.0], velocity.as_slice(), &[0.0]].concat();
 
-            self.compute_particle_buffer.as_mut().unwrap().write().unwrap()[i * stride..(i+1) * stride].copy_from_slice(&final_slice);
+            self.compute_particle_buffer.as_mut().unwrap().write().unwrap()[(i * stride)..((i+1) * stride)].copy_from_slice(&final_slice);
         }
         
         let descriptor_set_allocator = StandardDescriptorSetAllocator::new(self.device.clone(), Default::default());
@@ -335,7 +334,7 @@ pub struct FluidComputePipeline {
 impl FluidComputePipeline {
     pub fn new(device: Arc<Device>) -> Self {
         let density_shader = density::load(device.clone()).unwrap();
-        let update_shader = cs::load(device.clone()).unwrap();
+        let update_shader = pressure::load(device.clone()).unwrap();
      
         let density_stage = PipelineShaderStageCreateInfo::new(density_shader.entry_point("main").unwrap());
         let update_stage = PipelineShaderStageCreateInfo::new(update_shader.entry_point("main").unwrap());
@@ -394,7 +393,7 @@ impl FluidComputePipeline {
             smoothing_radius: SMOOTHING_RADIUS,
         };
 
-        let compute_push_constants = cs::Constants { 
+        let compute_push_constants = pressure::Constants { 
             size: fluid.len(), 
             particle_mass: PARTICLE_MASS, 
             smoothing_radius: SMOOTHING_RADIUS, 
@@ -402,7 +401,7 @@ impl FluidComputePipeline {
             pressure_constant: fluid.pressure(),
             viscosity_constant: fluid.viscosity(),
             dt: dt.into(), 
-            bounds: cs::BoundingBox { x1: bounds.x1, x2: bounds.x2, z1: bounds.z1, z2: bounds.z2, y1: bounds.y1, y2: bounds.y2, damping_factor: bounds.damping_factor }
+            bounds: pressure::BoundingBox { x1: bounds.x1, x2: bounds.x2, z1: bounds.z1, z2: bounds.z2, y1: bounds.y1, y2: bounds.y2, damping_factor: bounds.damping_factor }
         };
 
         density_builder
@@ -427,7 +426,7 @@ impl FluidComputePipeline {
                 vec![fluid.update_descriptor()]
             ).unwrap()
             .push_constants(self.update_layout.clone(), 0, compute_push_constants).unwrap()
-            .dispatch([2048, 1, 1]).unwrap();
+            .dispatch([1024, 1, 1]).unwrap();
 
         let cmd_buffer_2 = update_builder.build().unwrap();
 
