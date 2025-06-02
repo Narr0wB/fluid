@@ -136,15 +136,16 @@ fn main() {
     let model_matrix = Matrix4::new_scaling(3.0);
     let bounding_box = Mesh::new(vertices, indices, model_matrix, device.clone()); 
 
-    let pressure_constant = 3.0;
-    let density = 998.29;
+    let pressure_constant = 0.001;
+    let density = 20.0;
     let viscosity = 3.5;
-    let particle_radius = 2.0 * ((3.0 * fluid::PARTICLE_MASS) / (4.0*std::f32::consts::PI*998.29)).cbrt(); // m
+    // let particle_radius = 2.0 * ((3.0 * fluid::PARTICLE_MASS) / (4.0*std::f32::consts::PI*998.29)).cbrt(); // m
+    let particle_radius = SMOOTHING_RADIUS / 3.0;
 
     let sphere = create_sphere(particle_radius, Vector3::new(0.0, 0.0, 0.0), 10, device.clone());
-    let initial_particle_distance = f32::powf((4.0*particle_radius.powi(3)*f32::pi())/(3.0*50.0), 1.0/3.0) + 0.07;
+    let initial_particle_distance = f32::powf((4.0*SMOOTHING_RADIUS.powi(3)*f32::pi())/(3.0*50.0), 1.0/3.0);
     println!("{} pr: {} sr: {}", initial_particle_distance, particle_radius, SMOOTHING_RADIUS);
-    let particles = particle_cube(initial_particle_distance, Vector3::new(2.0, 5.0, 2.0), Some(Vector3::new(0.5, 0.0, 0.5)), 30);
+    let particles = particle_cube(initial_particle_distance, Vector3::new(2.0, 1.0, 2.0), Some(Vector3::new(0.5, 0.0, 0.5)), 30);
 
 
     let mut fluid = Fluid::new(particles.clone(), density, pressure_constant, viscosity, device.clone());

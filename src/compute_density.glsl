@@ -37,14 +37,14 @@ layout(std140, push_constant) uniform Constants {
 
 
 
-// spiky-6 smoothing kernel
+// spiky smoothing kernel
 float smoothing_kernel(float dist, float radius) {
     if (dist > radius) {
         return 0.0;
     }
     
-    float volume = 15.0 / (M_PI * pow(radius, 6));
-    return pow((radius - dist), 3) * volume;
+    float volume = 315.0 / (64*M_PI * pow(radius, 9));
+    return pow((radius*radius - dist*dist), 3) * volume;
 }
 
 

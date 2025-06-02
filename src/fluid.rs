@@ -5,7 +5,7 @@ use vulkano::{buffer::{Buffer, BufferCreateInfo, BufferUsage, Subbuffer}, comman
 use rand::Rng;
 
 pub const PARTICLE_MASS: f32    = 0.02; // kg
-pub const SMOOTHING_RADIUS: f32 = 2.0 * 0.0457; // m
+pub const SMOOTHING_RADIUS: f32 = 0.2; // m
 pub const GRAVITY: Vector3<f32> = Vector3::new(0.0, -9.81, 0.0);
 
 mod pressure {

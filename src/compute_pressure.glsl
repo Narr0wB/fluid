@@ -45,7 +45,7 @@ layout(std140, push_constant) uniform Constants {
 
 
 
-
+// spiky kernel
 float smoothing_kernel_derivative(float dist, float radius) {
     if (dist > radius) {
         return 0.0;
@@ -55,17 +55,18 @@ float smoothing_kernel_derivative(float dist, float radius) {
     return scale * (radius - dist) * (radius - dist);
 }
 
+// viscosity kernel
 float laplacian_kernel(float dist, float radius)  {
     if (dist > radius) {
         return 0.0;
     }
 
-    float scale = -90.0 / (M_PI * pow(radius, 6));
-    return scale * (radius - dist) * (1.0/dist) * (radius - dist) * (radius - 2*dist);
+    float scale = 45.0 / (M_PI * pow(radius, 6));
+    return scale * (radius - dist);
 }
 
 float density_to_pressure(float density) {
-    // if (density < c.target_density) return 0;
+    if (density < c.target_density) return 0;
 
     return c.pressure_constant * (density - c.target_density);
 }
@@ -83,7 +84,7 @@ mat4 translation(vec3 pos) {
 
 
 
-shared vec3 pressure;
+shared vec3 forces;
 const vec3 gravity = vec3(0.0, -9.81, 0.0);
 
 const vec3 NORM_X1 = vec3(1, 0, 0);
@@ -98,7 +99,7 @@ void main() {
         float di    = pi.density;
         
         if (gl_LocalInvocationID.x == 0) {
-            pressure = vec3(0.0);
+            forces = vec3(0.0);
         }
 
         barrier();
@@ -109,29 +110,28 @@ void main() {
             Particle pj = p.particles[j];
             float dj = pj.density;
 
-            vec3 dir = normalize(pi.position.xyz - pj.position.xyz);
+            vec3 dir = (pi.position - pj.position);
             float dist = length(dir);
-
+            
+            if (dist == 0) continue;
             if (dist >= c.smoothing_radius) {continue;}
 
-            vec3 contribution = -dir * c.particle_mass * ((density_to_pressure(dj) + density_to_pressure(di)) / (2.0 * dj)) * smoothing_kernel_derivative(dist, c.smoothing_radius);
-            vec3 viscosity = c.viscosity_constant * ((pi.velocity.xyz - pj.velocity.xyz) / dj) * c.particle_mass * laplacian_kernel(dist, c.smoothing_radius);
+            vec3 pressure_force = -(dir/dist) * c.particle_mass * c.particle_mass * ((density_to_pressure(dj)/(dj*dj) + density_to_pressure(di)/(di*di))) * smoothing_kernel_derivative(dist, c.smoothing_radius);
+            vec3 viscosity_force = c.viscosity_constant * ((pi.velocity.xyz - pj.velocity.xyz) / dj) * c.particle_mass * laplacian_kernel(dist, c.smoothing_radius);
 
-            contribution += viscosity;
+            pressure_force += viscosity_force;
 
-            atomicAdd(pressure.x, contribution.x);
-            atomicAdd(pressure.y, contribution.y);
-            atomicAdd(pressure.z, contribution.z);
+            atomicAdd(forces.x, pressure_force.x);
+            atomicAdd(forces.y, pressure_force.y);
+            atomicAdd(forces.z, pressure_force.z);
         }
 
         barrier();
         
         if (gl_LocalInvocationID.x == 0)  {
-            vec3 accel = pressure + gravity;
+            vec3 accel = (forces / di) + gravity;
 
-            if (isnan(accel.y) || isnan(accel.z) || isnan(accel.z)) {accel = gravity;} 
             p.particles[i].velocity += (accel) * c.dt;
-            if (length(p.particles[i].velocity) > 10.0) p.particles[i].velocity *= 0.01;
 
             vec3 step = p.particles[i].velocity * c.dt;
             vec3 new_position = p.particles[i].position + step;
@@ -171,7 +171,7 @@ void main() {
             t.translations[i] = translation(new_position);
 
             // We are going to use one of the cells of the translation matrix to propagate to the fragment shader
-            // the velocity normalized to the range [0, 1] in order to give a specific color to each particle based on the velocity
+            // the velocity, normalized to the range [0, 1] in order to give a specific color to each particle based on the velocity
             t.translations[i][0][1] = length(pi.velocity) / 10.0;
         }
     }
