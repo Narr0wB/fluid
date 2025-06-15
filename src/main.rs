@@ -136,16 +136,16 @@ fn main() {
     let model_matrix = Matrix4::new_scaling(3.0);
     let bounding_box = Mesh::new(vertices, indices, model_matrix, device.clone()); 
 
-    let pressure_constant = 0.001;
-    let density = 20.0;
-    let viscosity = 3.5;
-    // let particle_radius = 2.0 * ((3.0 * fluid::PARTICLE_MASS) / (4.0*std::f32::consts::PI*998.29)).cbrt(); // m
+    let density = 1000.0;
+    let pressure_constant = 50.0;
+    let viscosity = 0.0;
     let particle_radius = SMOOTHING_RADIUS / 3.0;
 
     let sphere = create_sphere(particle_radius, Vector3::new(0.0, 0.0, 0.0), 10, device.clone());
-    let initial_particle_distance = f32::powf((4.0*SMOOTHING_RADIUS.powi(3)*f32::pi())/(3.0*50.0), 1.0/3.0);
-    println!("{} pr: {} sr: {}", initial_particle_distance, particle_radius, SMOOTHING_RADIUS);
-    let particles = particle_cube(initial_particle_distance, Vector3::new(2.0, 1.0, 2.0), Some(Vector3::new(0.5, 0.0, 0.5)), 30);
+    // let initial_particle_distance = f32::powf((4.0*SMOOTHING_RADIUS.powi(3)*f32::pi())/(3.0*50.0), 1.0/3.0);
+    let initial_particle_distance = 0.9 * SMOOTHING_RADIUS;
+    println!("ipd: {} pr: {} sr: {}", initial_particle_distance, particle_radius, SMOOTHING_RADIUS);
+    let particles = particle_cube(initial_particle_distance, Vector3::new(2.0, 5.0, 2.0), Some(Vector3::new(0.0, 0.0, 0.0)), 20);
 
 
     let mut fluid = Fluid::new(particles.clone(), density, pressure_constant, viscosity, device.clone());
@@ -157,7 +157,7 @@ fn main() {
     let mut frame_time = 0.0;
     let mut capturing_mouse_input = false;
     let mut last_position_cursor = None::<PhysicalPosition<f64>>;
-    let timestep = 0.01; 
+    let timestep = 0.001; 
     
     event_loop.run(move |event, _, control_flow| {
         let before = Instant::now();
@@ -243,7 +243,7 @@ fn main() {
                 let mut num_particles = fluid.len();
 
                 if !renderer.stop_flag {    
-                    (buffer, num_particles) = compute_pipeline.compute(timestep, &fluid, &BoundingBox { x1: 0.0, x2: 3.0, z1: 0.0, z2: 3.0, y1: 0.0, y2: 10.0, damping_factor: 0.5 }, graphics_queue.clone());
+                    (buffer, num_particles) = compute_pipeline.compute(timestep, &fluid, &BoundingBox { x1: 0.0, x2: 3.0, z1: 0.0, z2: 3.0, y1: 0.0, y2: 10.0, damping_factor: 0.3 }, graphics_queue.clone());
                 }
 
                 let first = renderer.begin();

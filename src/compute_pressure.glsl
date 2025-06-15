@@ -1,12 +1,13 @@
-#version 450  // Downgrade to 450 for better compatibility
+#version 450
+#extension GL_EXT_shader_atomic_float : enable
 #define M_PI 3.1415926535897932384626433832795
+#define EPSILON 1e-5
 
 layout(local_size_x=64, local_size_y=1, local_size_z=1) in;
 
 struct Particle {
     vec3 position;
     float density;
-
     vec3 velocity;
     float pressure;
 };
@@ -18,8 +19,10 @@ struct BoundingBox {
     float z2;
     float y1;
     float y2;
+
     float damping_factor;
 };
+
 
 layout(std140, binding = 0) buffer Particles {
     Particle particles[];
@@ -40,36 +43,23 @@ layout(std140, push_constant) uniform Constants {
     BoundingBox bounds;
 } c;
 
-// Shared memory per work item
-shared vec3 shared_pressure[64];  // Matches local_size_x
-
-float smoothing_kernel(float dist, float radius) {
+float smoothing_kernel_derivative(float dist, float radius) {
     if (dist > radius) return 0.0;
-    float r2 = radius * radius;
-    float d2 = dist * dist;
-    float diff = r2 - d2;
-    float volume = 315.0 / (64.0 * M_PI * pow(radius, 9));
-    return diff * diff * diff * volume;  // Optimized pow(diff,3)
+    float diff = radius - dist;
+    float scale = -45.0 / (M_PI * pow(radius, 6));
+    return scale * diff * diff;  
 }
 
-// viscosity kernel
+// Viscosity kernel (corrected)
 float laplacian_kernel(float dist, float radius)  {
     if (dist > radius) return 0.0;
     float scale = 45.0 / (M_PI * pow(radius, 6));
     return scale * (radius - dist);
 }
 
-float smoothing_kernel_derivative(float dist, float radius) {
-    if (dist > radius) return 0.0;
-    float diff = radius - dist;
-    float scale = -45.0 / (M_PI * pow(radius, 6));
-    return scale * diff * diff * diff;  // Optimized pow(diff,3)
-}
-
 float density_to_pressure(float density) {
-    return (density >= c.target_density) 
-        ? c.pressure_constant * (density - c.target_density) 
-        : 0.0;
+    if (density < c.target_density) return 0.0;
+    return c.pressure_constant * (density - c.target_density);
 }
 
 mat4 translation(vec3 pos) {
@@ -83,98 +73,78 @@ mat4 translation(vec3 pos) {
 
 const vec3 gravity = vec3(0.0, -9.81, 0.0);
 
-const vec3 NORM_X1 = vec3(1, 0, 0);
-const vec3 NORM_X2 = vec3(-1, 0, 0);
-const vec3 NORM_Z1 = vec3(0, 0, 1);
-const vec3 NORM_Z2 = vec3(0, 0, -1);
-const vec3 NORM_Y1 = vec3(0, 1, 0);
+void handle_collision(inout vec3 position, inout vec3 velocity) {
+    vec3 min_bound = vec3(c.bounds.x1, c.bounds.y1, c.bounds.z1);
+    vec3 max_bound = vec3(c.bounds.x2, c.bounds.y2, c.bounds.z2);
+    float r = c.smoothing_radius * 0.5;
+    
+    if (position.x < min_bound.x + r) {
+        position.x = min_bound.x + r;
+        velocity.x *= -c.bounds.damping_factor;
+    } else if (position.x > max_bound.x - r) {
+        position.x = max_bound.x - r;
+        velocity.x *= -c.bounds.damping_factor;
+    }
+    
+    if (position.y < min_bound.y + r) {
+        position.y = min_bound.y + r;
+        velocity.y *= -c.bounds.damping_factor;
+    } else if (position.y > max_bound.y - r) {
+        position.y = max_bound.y - r;
+        velocity.y *= -c.bounds.damping_factor;
+    }
+    
+    if (position.z < min_bound.z + r) {
+        position.z = min_bound.z + r;
+        velocity.z *= -c.bounds.damping_factor;
+    } else if (position.z > max_bound.z - r) {
+        position.z = max_bound.z - r;
+        velocity.z *= -c.bounds.damping_factor;
+    }
+}
 
 void main() {
-    uint i = gl_GlobalInvocationID.x;
-    if (i >= c.size) return;
-
-    Particle pi = p.particles[i];
-    float di = pi.position.w;
-    vec3 pressure_force = vec3(0.0);
-
-    // Each thread calculates its own contribution
-    for (uint j = 0; j < c.size; j++) {
-        if (i == j) continue;
+    for (uint i = gl_GlobalInvocationID.x; i < c.size; i += gl_WorkGroupSize.x * gl_NumWorkGroups.x) {
+        Particle pi = p.particles[i];
+        vec3 total_force = vec3(0.0);
         
-        Particle pj = p.particles[j];
-        float dj = pj.position.w;
-        vec3 delta = pi.position.xyz - pj.position.xyz;
-        float dist = length(delta);
-        
-        if (dist >= c.smoothing_radius || dist < 0.001) continue;
-        
-        vec3 dir = delta / dist;  // Normalize
-        float deriv = smoothing_kernel_derivative(dist, c.smoothing_radius);
-        float pressure_j = density_to_pressure(dj);
-        float pressure_i = density_to_pressure(di);
-        
-        // Pressure force
-        vec3 contribution = -dir * c.particle_mass * 
-                           ((pressure_j + pressure_i) / (2.0 * dj)) * 
-                           deriv;
-        
-        // Viscosity force
-        vec3 viscosity = c.viscosity_constant * 
-                        ((pj.velocity.xyz - pi.velocity.xyz) / dj) * 
-                        c.particle_mass * 
-                        laplacian_kernel(dist, c.smoothing_radius);
-        
-        pressure_force += contribution + viscosity;
-    }
-
-    // Store in shared memory for reduction
-    shared_pressure[gl_LocalInvocationID.x] = pressure_force;
-    barrier();
-    
-    // Reduction in shared memory (first thread sums)
-    if (gl_LocalInvocationID.x == 0) {
-        vec3 total_pressure = vec3(0.0);
-        for (uint idx = 0; idx < 64; idx++) {
-            total_pressure += shared_pressure[idx];
+        for (uint j = 0; j < c.size; j++) {
+            if (i == j) continue;
+            
+            Particle pj = p.particles[j];
+            vec3 dir = pi.position - pj.position;
+            float dist = length(dir);
+            
+            if (dist < EPSILON || dist > c.smoothing_radius) continue;
+            
+            vec3 norm_dir = dir / max(dist, EPSILON);
+            float pressure_i = density_to_pressure(pi.density);
+            float pressure_j = density_to_pressure(pj.density);
+            
+            vec3 pressure_force = -norm_dir * c.particle_mass * 
+                                (pressure_i/(pi.density*pi.density) + 
+                                pressure_j/(pj.density*pj.density)) *
+                                smoothing_kernel_derivative(dist, c.smoothing_radius);
+            
+            vec3 viscosity_force = c.viscosity_constant * c.particle_mass *
+                                (pj.velocity - pi.velocity) / pj.density *
+                                laplacian_kernel(dist, c.smoothing_radius);
+            
+            total_force += pressure_force + viscosity_force;
         }
         
-        // Physics integration
-        vec3 accel = gravity + (total_pressure / di);
-        if (any(isnan(accel))) accel = vec3(0.0);
+        total_force += c.particle_mass * gravity;
         
-        p.particles[i].velocity.xyz += accel * c.dt;
-        vec3 new_position = pi.position.xyz + p.particles[i].velocity.xyz * c.dt;
+        vec3 acceleration = total_force / c.particle_mass;
+        vec3 new_velocity = pi.velocity + acceleration * c.dt;
+        vec3 new_position = pi.position + new_velocity * c.dt;
         
-        // Boundary collision
-        float half_radius = c.smoothing_radius * 0.5;
-        vec3 vel = p.particles[i].velocity.xyz;
+        handle_collision(new_position, new_velocity);
         
-        if (new_position.x - half_radius <= c.bounds.x1) {
-            vel.x *= -1.0 * (1.0 - c.bounds.damping_factor);
-            new_position.x = c.bounds.x1 + half_radius;
-        }
-        else if (new_position.x + half_radius >= c.bounds.x2) {
-            vel.x *= -1.0 * (1.0 - c.bounds.damping_factor);
-            new_position.x = c.bounds.x2 - half_radius;
-        }
+        p.particles[i].velocity = new_velocity;
+        p.particles[i].position = new_position;
         
-        if (new_position.z - half_radius <= c.bounds.z1) {
-            vel.z *= -1.0 * (1.0 - c.bounds.damping_factor);
-            new_position.z = c.bounds.z1 + half_radius;
-        }
-        else if (new_position.z + half_radius >= c.bounds.z2) {
-            vel.z *= -1.0 * (1.0 - c.bounds.damping_factor);
-            new_position.z = c.bounds.z2 - half_radius;
-        }
-        
-        if (new_position.y - half_radius <= c.bounds.y1) {
-            vel.y *= -1.0 * (1.0 - c.bounds.damping_factor);
-            new_position.y = c.bounds.y1 + half_radius;
-        }
-        
-        p.particles[i].velocity.xyz = vel;
-        p.particles[i].position.xyz = new_position;
         t.translations[i] = translation(new_position);
-        t.translations[i][0][1] = length(vel) * 0.5;  // Velocity magnitude
+        t.translations[i][0][1] = length(new_velocity) / 10.0;
     }
 }

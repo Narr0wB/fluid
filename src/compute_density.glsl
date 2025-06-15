@@ -34,24 +34,18 @@ layout(std140, push_constant) uniform Constants {
     float smoothing_radius;
 } c;
 
-
-
-
-// spiky smoothing kernel
 float smoothing_kernel(float dist, float radius) {
-    if (dist > radius) {
-        return 0.0;
-    }
+    if (dist > radius) return 0.0;
     
-    float volume = 315.0 / (64*M_PI * pow(radius, 9));
-    return pow((radius*radius - dist*dist), 3) * volume;
+    float h2 = radius * radius;
+    float r2 = dist * dist;
+    float diff = h2 - r2;
+    float volume = 315.0 / (64.0 * M_PI * pow(radius, 9));
+    return volume * diff * diff * diff;  
 }
 
-
-
-
 void main() {
-    for (uint i = gl_WorkGroupID.x; i < c.size; i += gl_NumWorkGroups.x) {
+    for (uint i = gl_GlobalInvocationID.x; i < c.size; i += gl_WorkGroupSize.x * gl_NumWorkGroups.x) {
         Particle pi = p.particles[i];
         
         if (gl_LocalInvocationID.x == 0) {
@@ -60,14 +54,14 @@ void main() {
         
         barrier();
 
-        for (uint j = gl_LocalInvocationID.x; j < c.size; j += gl_WorkGroupSize.x) {
+        for (uint j = 0; j < c.size; ++j) {
             Particle pj = p.particles[j];
 
             float dist = length(pi.position.xyz - pj.position.xyz);
-            if (dist >= c.smoothing_radius) {continue;}
+            if (dist > c.smoothing_radius) continue;
 
             float contribution = c.particle_mass * smoothing_kernel(dist, c.smoothing_radius);
-            atomicAdd(p.particles[i].density, contribution); 
+            p.particles[i].density += contribution; 
         }
     }
 }
