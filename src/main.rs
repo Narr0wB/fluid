@@ -137,20 +137,18 @@ fn main() {
     let bounding_box = Mesh::new(vertices, indices, model_matrix, device.clone()); 
 
     let density = 1000.0;
-    let pressure_constant = 50.0;
-    let viscosity = 0.0;
+    let pressure_constant = 100.0;
+    let viscosity = 0.01;
     let particle_radius = SMOOTHING_RADIUS / 3.0;
 
     let sphere = create_sphere(particle_radius, Vector3::new(0.0, 0.0, 0.0), 10, device.clone());
     // let initial_particle_distance = f32::powf((4.0*SMOOTHING_RADIUS.powi(3)*f32::pi())/(3.0*50.0), 1.0/3.0);
-    let initial_particle_distance = 0.9 * SMOOTHING_RADIUS;
-    println!("ipd: {} pr: {} sr: {}", initial_particle_distance, particle_radius, SMOOTHING_RADIUS);
+    let initial_particle_distance = 0.8 * SMOOTHING_RADIUS;
     let particles = particle_cube(initial_particle_distance, Vector3::new(2.0, 5.0, 2.0), Some(Vector3::new(0.0, 0.0, 0.0)), 20);
 
+    println!("ipd: {} pr: {} sr: {}", initial_particle_distance, particle_radius, SMOOTHING_RADIUS);
 
     let mut fluid = Fluid::new(particles.clone(), density, pressure_constant, viscosity, device.clone());
-
-    // Bind the fluid to the compute pipeline
     let compute_pipeline = FluidComputePipeline::new(device.clone());
     fluid.bind_compute(&compute_pipeline);
    
@@ -243,7 +241,7 @@ fn main() {
                 let mut num_particles = fluid.len();
 
                 if !renderer.stop_flag {    
-                    (buffer, num_particles) = compute_pipeline.compute(timestep, &fluid, &BoundingBox { x1: 0.0, x2: 3.0, z1: 0.0, z2: 3.0, y1: 0.0, y2: 10.0, damping_factor: 0.3 }, graphics_queue.clone());
+                    (buffer, num_particles) = compute_pipeline.compute(timestep, &fluid, &BoundingBox { x1: 0.0, x2: 3.0, z1: 0.0, z2: 3.0, y1: 0.0, y2: 10.0, damping_factor: 0.4 }, graphics_queue.clone());
                 }
 
                 let first = renderer.begin();
@@ -252,8 +250,7 @@ fn main() {
                 renderer.draw_particles(&sphere, buffer, num_particles);
                 renderer.end(first);
 
-                frame_time = before.elapsed().as_micros() as f32;
-
+                // frame_time = before.elapsed().as_micros() as f32;
                 // println!("fps {:?} {:?}", 1.0 / (frame_time / 1_000_000_f32), before.elapsed()); 
             }
             _ => ()

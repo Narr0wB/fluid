@@ -1,6 +1,7 @@
 #version 460
     
 #extension GL_EXT_shader_atomic_float: enable
+#extension GL_EXT_debug_printf: enable
 #define M_PI 3.1415926535897932384626433832795
 
 layout(local_size_x=64, local_size_y=1, local_size_z=1) in;
