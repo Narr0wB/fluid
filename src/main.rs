@@ -105,7 +105,7 @@ fn main() {
     let graphics_queue = queues.next().unwrap();
 
     let mut camera = Camera::new(
-        Vector3::new(8.0, 3.0, -5.0),                      // position
+        Vector3::new(5.0, 2.0, -5.0),                      // position
         Vector3::new(0.0, 0.0, 1.0),                        // orientation
         None,                                               // aspect_ratio
         30.0                                                // FOV
@@ -138,13 +138,17 @@ fn main() {
 
     let density = 1000.0;
     let pressure_constant = 100.0;
-    let viscosity = 0.01;
-    let particle_radius = SMOOTHING_RADIUS / 3.0;
+    let viscosity = 0.10;
+    let timestep = (0.125 * SMOOTHING_RADIUS * SMOOTHING_RADIUS / viscosity) / 2.0; 
+    let particle_radius = SMOOTHING_RADIUS / 2.0;
 
     let sphere = create_sphere(particle_radius, Vector3::new(0.0, 0.0, 0.0), 10, device.clone());
-    // let initial_particle_distance = f32::powf((4.0*SMOOTHING_RADIUS.powi(3)*f32::pi())/(3.0*50.0), 1.0/3.0);
-    let initial_particle_distance = 0.8 * SMOOTHING_RADIUS;
-    let particles = particle_cube(initial_particle_distance, Vector3::new(2.0, 5.0, 2.0), Some(Vector3::new(0.0, 0.0, 0.0)), 20);
+    let initial_particle_distance = f32::powf((4.0*SMOOTHING_RADIUS.powi(3)*f32::pi())/(3.0*50.0), 1.0/3.0);
+    let particles_1 = particle_cube(initial_particle_distance, Vector3::new(2.0, 2.0, 2.0), Some(Vector3::new(0.0, 0.0, 0.0)), 30);
+    let particles_2 = particle_cube(initial_particle_distance, Vector3::new(2.0, 10.0, 2.0), Some(Vector3::new(0.0, 0.0, 0.0)), 10);
+
+    let particles = [particles_1, particles_2].concat();
+
 
     println!("ipd: {} pr: {} sr: {}", initial_particle_distance, particle_radius, SMOOTHING_RADIUS);
 
@@ -155,7 +159,6 @@ fn main() {
     let mut frame_time = 0.0;
     let mut capturing_mouse_input = false;
     let mut last_position_cursor = None::<PhysicalPosition<f64>>;
-    let timestep = 0.001; 
     
     event_loop.run(move |event, _, control_flow| {
         let before = Instant::now();
@@ -164,7 +167,7 @@ fn main() {
             fluid.reset(particles.clone());
             fluid.bind_compute(&compute_pipeline);
 
-            compute_pipeline.compute(timestep, &fluid, &BoundingBox { x1: 0.0, x2: 5.0, z1: 0.0, z2: 5.0, y1: 0.0, y2: 10.0, damping_factor: 0.5 }, graphics_queue.clone());
+            compute_pipeline.compute_step(timestep, &fluid, &BoundingBox { x1: 0.0, x2: 5.0, z1: 0.0, z2: 5.0, y1: 0.0, y2: 10.0, damping_factor: 0.2 }, graphics_queue.clone());
             
             renderer.reset_flag = false;
         }
@@ -241,7 +244,7 @@ fn main() {
                 let mut num_particles = fluid.len();
 
                 if !renderer.stop_flag {    
-                    (buffer, num_particles) = compute_pipeline.compute(timestep, &fluid, &BoundingBox { x1: 0.0, x2: 3.0, z1: 0.0, z2: 3.0, y1: 0.0, y2: 10.0, damping_factor: 0.4 }, graphics_queue.clone());
+                    (buffer, num_particles) = compute_pipeline.compute_step(timestep, &fluid, &BoundingBox { x1: 0.0, x2: 3.0, z1: 0.0, z2: 3.0, y1: 0.0, y2: 10.0, damping_factor: 0.3 }, graphics_queue.clone());
                 }
 
                 let first = renderer.begin();

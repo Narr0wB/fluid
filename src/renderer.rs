@@ -215,7 +215,7 @@ impl Renderer {
                 device.clone(),
                 surface,
                 SwapchainCreateInfo {
-                    min_image_count: 4,
+                    min_image_count: 2,
                     image_format,
                     image_extent: window.inner_size().into(),
                     image_usage: ImageUsage::COLOR_ATTACHMENT,
