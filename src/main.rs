@@ -138,13 +138,13 @@ fn main() {
 
     let density = 1000.0;
     let pressure_constant = 100.0;
-    let viscosity = 0.10;
+    let viscosity = 0.1;
     let timestep = (0.125 * SMOOTHING_RADIUS * SMOOTHING_RADIUS / viscosity) / 2.0; 
     let particle_radius = SMOOTHING_RADIUS / 2.0;
 
     let sphere = create_sphere(particle_radius, Vector3::new(0.0, 0.0, 0.0), 10, device.clone());
     let initial_particle_distance = f32::powf((4.0*SMOOTHING_RADIUS.powi(3)*f32::pi())/(3.0*50.0), 1.0/3.0);
-    let particles_1 = particle_cube(initial_particle_distance, Vector3::new(2.0, 2.0, 2.0), Some(Vector3::new(0.0, 0.0, 0.0)), 30);
+    let particles_1 = particle_cube(initial_particle_distance, Vector3::new(2.0, 4.0, 2.0), Some(Vector3::new(0.0, 0.0, 0.0)), 30);
     let particles_2 = particle_cube(initial_particle_distance, Vector3::new(2.0, 10.0, 2.0), Some(Vector3::new(0.0, 0.0, 0.0)), 10);
 
     let particles = [particles_1, particles_2].concat();
