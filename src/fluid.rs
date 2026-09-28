@@ -15,21 +15,21 @@ pub const GRAVITY: Vector3<f32> = Vector3::new(0.0, -9.81, 0.0);
 mod pressure {
     vulkano_shaders::shader! {
         ty: "compute",
-        path: "src/compute_pressure.glsl" 
+        path: "src/shaders/compute_pressure.glsl" 
     }
 }
 
 mod density {
     vulkano_shaders::shader! {
         ty: "compute",
-        path: "src/compute_density.glsl"
+        path: "src/shaders/compute_density.glsl"
     }
 }
 
 mod positions {
     vulkano_shaders::shader! {
         ty: "compute",
-        path: "src/compute_positions.glsl"
+        path: "src/shaders/compute_positions.glsl"
     }
 }
 

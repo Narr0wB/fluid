@@ -253,8 +253,8 @@ fn main() {
                 renderer.draw_particles(&sphere, buffer, num_particles);
                 renderer.end(first);
 
-                // frame_time = before.elapsed().as_micros() as f32;
-                // println!("fps {:?} {:?}", 1.0 / (frame_time / 1_000_000_f32), before.elapsed()); 
+                frame_time = before.elapsed().as_micros() as f32;
+                println!("fps {:?} {:?}", 1.0 / (frame_time / 1_000_000_f32), before.elapsed()); 
             }
             _ => ()
         }
