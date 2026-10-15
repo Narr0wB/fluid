@@ -1,0 +1,34 @@
+use std::sync::Arc;
+use winit::window::Window;
+
+pub struct Gpu {
+    pub adapter: wgpu::Adapter,
+    pub device: wgpu::Device,
+    pub queue: wgpu::Queue,
+}
+
+impl Gpu {
+    pub async fn new(window: Arc<Window>) -> anyhow::Result<(Self, wgpu::Surface<'static>)> {
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
+        let surface = instance.create_surface(window)?;
+
+        let adapter = instance
+            .request_adapter(&wgpu::RequestAdapterOptions {
+                power_preference: wgpu::PowerPreference::HighPerformance,
+                compatible_surface: Some(&surface),
+                ..Default::default()
+            })
+            .await?;
+
+        let (device, queue) = adapter
+            .request_device(&wgpu::DeviceDescriptor {
+                label: Some("device"),
+                required_features: adapter.features() & wgpu::Features::TIMESTAMP_QUERY,
+                required_limits: adapter.limits(),
+                ..Default::default()
+            })
+            .await?;
+
+        return Ok((Gpu { adapter, device, queue }, surface));
+    }
+}

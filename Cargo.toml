@@ -1,11 +1,15 @@
 [package]
-name = "fluid-sim"
+name = "fluid"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 
 [dependencies]
-nalgebra = "0.32.6"
-rand = "0.8.5"
-vulkano = "0.34.1"
-vulkano-shaders = "0.34.0"
-winit = "0.28"
+anyhow = "1.0.104"
+bytemuck = { version = "1.25.2", features = ["derive"] }
+glam = "0.33.11"
+half = { version = "2.7.1", features = ["bytemuck"] }
+mesh_to_sdf = "0.4.0"
+pollster = "1.0.1"
+tobj = "4.0.5"
+wgpu = "30.0.1"
+winit = "0.30.13"

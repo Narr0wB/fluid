@@ -1,97 +1,117 @@
-extern crate nalgebra as na;
+use std::f32::consts::{FRAC_PI_2, PI, TAU};
 
-use na::{Matrix4, Perspective3, RowVector4, Unit, Vector3};
+use glam::camera::rh::{proj::directx, view};
+use glam::{EulerRot, Mat4, Quat, Vec3};
 
-const UP: Vector3<f32> = Vector3::new(0.0, 1.0, 0.0);
+const Z_NEAR: f32 = 0.1;
+const Z_FAR: f32 = 100.0;
+const MIN_FOV: f32 = 10.0 * PI / 180.0;
+const MAX_FOV: f32 = 90.0 * PI / 180.0;
+const MAX_PITCH: f32 = FRAC_PI_2 - 0.01;
 
+/* 
+ Right-handed, +Y up, looks down -Z at zero yaw/pitch/roll. Positive yaw turns left, positive 
+ pitch looks up, positive roll lifts the right side. Clip space is +Y up with depth in 0..1.
+*/ 
 pub struct Camera {
-    position: Vector3<f32>,
-    orientation: Vector3<f32>,
+    position: Vec3,
+    yaw: f32,
+    pitch: f32,
+    roll: f32,
 
-    aspect_ratio: f32,
-    zfar: f32,
-    znear: f32,
-    fov: f32,
+    fov_y: f32,
+    aspect: f32,
+    z_near: f32,
+    z_far: f32,
 }
 
 impl Camera {
-    pub fn new(position: Vector3<f32>, orientation: Vector3<f32>, aspect_ratio: Option<f32>, fov: f32) -> Self {
-        Camera { position, orientation, aspect_ratio: aspect_ratio.unwrap_or(16.0 / 9.0), zfar: 100.0, znear: 1.0, fov }
+    pub fn new(position: Vec3, target: Vec3, fov_y: f32, aspect: f32) -> Self {
+        let mut camera = Camera {
+            position,
+            yaw: 0.0,
+            pitch: 0.0,
+            roll: 0.0,
+            fov_y: fov_y.clamp(MIN_FOV, MAX_FOV),
+            aspect,
+            z_near: Z_NEAR,
+            z_far: Z_FAR,
+        };
+        camera.look_at(target);
+        return camera;
     }
 
-    pub fn set_target(&mut self, camera_target: Vector3<f32>) {
-        self.orientation = (camera_target - self.position).normalize();
+    pub fn set_position(&mut self, position: Vec3) {
+        self.position = position;
     }
 
-    pub fn set_position(&mut self, camera_position: Vector3<f32>) {
-        self.position = camera_position;
+    pub fn translate(&mut self, delta: Vec3) {
+        self.position += delta;
     }
 
-    pub fn set_orientation(&mut self, camera_orientation: Vector3<f32>) {
-        if self.orientation.cross(&camera_orientation).norm() < 0.0001 { return; }
+    pub fn look_at(&mut self, target: Vec3) {
+        let Some(dir) = (target - self.position).try_normalize() else {
+            return;
+        };
 
-        self.orientation = camera_orientation;
+        self.set_orientation((-dir.x).atan2(-dir.z), dir.y.asin(), self.roll);
     }
 
-    pub fn set_fov(&mut self, fov: f32) {
-        if fov >= 90.0 || fov <= 10.0 { return; }
-
-        self.fov = fov;
+    pub fn set_orientation(&mut self, yaw: f32, pitch: f32, roll: f32) {
+        self.yaw = yaw.rem_euclid(TAU);
+        self.pitch = pitch.clamp(-MAX_PITCH, MAX_PITCH);
+        self.roll = roll.rem_euclid(TAU);
     }
 
-    pub fn set_aspect_ratio(&mut self, aspect: f32) {
-        self.aspect_ratio = aspect;
+    pub fn rotate(&mut self, d_yaw: f32, d_pitch: f32, d_roll: f32) {
+        self.set_orientation(self.yaw + d_yaw, self.pitch + d_pitch, self.roll + d_roll);
     }
 
-    pub fn get_position(&self) -> Vector3<f32> {
+    pub fn set_fov(&mut self, fov_y: f32) {
+        self.fov_y = fov_y.clamp(MIN_FOV, MAX_FOV);
+    }
+
+    pub fn resize(&mut self, width: u32, height: u32) {
+        if width == 0 || height == 0 {
+            return;
+        }
+
+        self.aspect = width as f32 / height as f32;
+    }
+
+    pub fn position(&self) -> Vec3 {
         self.position
     }
 
-    pub fn get_orientation(&self) -> Vector3<f32> {
-        self.orientation
+    pub fn fov(&self) -> f32 {
+        self.fov_y
     }
 
-    pub fn get_fov(&self) -> f32 {
-        self.fov
+    pub fn orientation(&self) -> Quat {
+        Quat::from_euler(EulerRot::YXZ, self.yaw, self.pitch, self.roll)
     }
 
-    pub fn view(&self) -> Matrix4<f32> {
-        let right_vector: Vector3<f32> = UP.cross(&self.orientation).normalize();
-        let up_vector: Vector3<f32> = right_vector.cross(&self.orientation).normalize();
-
-        let rotation = Matrix4::from_rows(&[
-            RowVector4::new(right_vector.x,     right_vector.y,     right_vector.z,     0.0),
-            RowVector4::new(up_vector.x,        up_vector.y,        up_vector.z,        0.0),
-            RowVector4::new(self.orientation.x, self.orientation.y, self.orientation.z, 0.0),
-            RowVector4::new(0.0, 0.0, 0.0, 1.0)
-        ]);
-
-        let translation = Matrix4::from_rows(&[
-            RowVector4::new(1.0, 0.0, 0.0, -self.position.x),
-            RowVector4::new(0.0, 1.0, 0.0, -self.position.y),
-            RowVector4::new(0.0, 0.0, 1.0, -self.position.z),
-            RowVector4::new(0.0, 0.0, 0.0, 1.0)
-        ]);
-
-        return rotation * translation;
+    pub fn forward(&self) -> Vec3 {
+        self.orientation() * Vec3::NEG_Z
     }
 
-    pub fn projection(&self) -> Matrix4<f32> {
-        let fov_factor: f32 = 1.0/self.fov.to_radians().tan();
-        let lambda: f32 = self.zfar / (self.zfar - self.znear);
-        let lambda2: f32 = -(self.zfar * self.znear) / (self.zfar - self.znear);
-
-        let p = Matrix4::from_rows(&[
-            RowVector4::new(self.aspect_ratio * fov_factor, 0.0, 0.0, 0.0),
-            RowVector4::new(0.0, fov_factor, 0.0, 0.0),
-            RowVector4::new(0.0, 0.0, lambda, lambda2),
-            RowVector4::new(0.0, 0.0, 1.0, 0.0)
-        ]);
-
-        return p;
+    pub fn right(&self) -> Vec3 {
+        self.orientation() * Vec3::X
     }
 
-    pub fn vp(&self) -> Matrix4<f32> {
-        return self.projection() * self.view();
+    pub fn up(&self) -> Vec3 {
+        self.orientation() * Vec3::Y
+    }
+
+    pub fn view(&self) -> Mat4 {
+        view::look_to_mat4(self.position, self.forward(), self.up())
+    }
+
+    pub fn projection(&self) -> Mat4 {
+        directx::perspective(self.fov_y, self.aspect, self.z_near, self.z_far)
+    }
+
+    pub fn view_projection(&self) -> Mat4 {
+        self.projection() * self.view()
     }
 }
