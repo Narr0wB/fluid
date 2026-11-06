@@ -1,28 +1,43 @@
 # Fluid
-## SPH fluid simulation in Rust and Vulkan
+## SPH fluid simulation in Rust and WebGPU
 
-![Vulkan](https://a11ybadges.com/badge?logo=vulkan) ![Rust](https://a11ybadges.com/badge?logo=rust)
+![Rust](https://a11ybadges.com/badge?logo=rust)
 
 
-This is a demo of a particle-based fluid simulation using the SPH method. All the rendering and computing is done through Vulkan using the vulkano crate.
+This is a demo of a particle-based fluid simulation using the SPH method. All the rendering and computing is done on the GPU through the wgpu crate. Neighbours are found with an O(N^2) brute-force search and a distance check.
+
+The fluid collides with triangle meshes loaded from OBJ files, which are baked into signed distance fields. It is drawn with screen-space fluid rendering: smoothed depth, thickness, refraction, absorption, Fresnel reflections and specular highlights.
+
+## Running
+
+```
+cargo run --release
+cargo run --release -- path/to/mesh.obj
+```
+
+Without an argument the scene uses `assets/torus.obj`. Collider meshes should be watertight, and their transforms may only use uniform scale.
 
 ## Demo
 
-![Vidio](https://github.com/user-attachments/assets/caa04ef4-c3f9-46fb-a453-2499a5567879)
+![Demo](assets/demo.gif)
+
+28,000 particles falling onto a torus, shown with water shading and then with spheres coloured by speed. The footage was rendered offline at half speed, so it runs faster than the live simulation does. [Full-quality video](assets/demo.mp4).
 
 ## Controls
 
 - To move around the simulation use the [**W A S D Space LShift**] keys
+- To look around hold the left mouse button and drag
 - To stop/start the simulation at any point use the **C** key
 - To restart the simulation use the **R** key
+- To switch between the shaded fluid and spheres coloured by speed use the **T** key
 - To zoom in/out use the scroll wheel on your mouse
 
 ## References
 
 - [Paper](https://github.com/genpfault/sph-tutorial/blob/master/papers/Efficient%20Neighbor%20Search%20for%20Particle-based%20Fluids.pdf) - Efficient Neighbor Search for Particle-based Fluids
 - [Paper](https://matthias-research.github.io/pages/publications/sca03.pdf) - Particle-Based Fluid Simulation for Interactive Applications
-- [Guide](https://vulkano.rs/01-introduction/01-introduction.html) - Vulkano Rust documentation and guide
-- [VKGuide](https://vkguide.dev/) - Vulkan tutorial and guide
+- [Paper](https://developer.download.nvidia.com/presentations/2010/gdc/Direct3D_Effects.pdf) - Screen Space Fluid Rendering for Games
+- [Guide](https://sotrh.github.io/learn-wgpu/) - Learn wgpu
 
 ## License
 

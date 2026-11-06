@@ -41,10 +41,6 @@ impl Camera {
         return camera;
     }
 
-    pub fn set_position(&mut self, position: Vec3) {
-        self.position = position;
-    }
-
     pub fn translate(&mut self, delta: Vec3) {
         self.position += delta;
     }

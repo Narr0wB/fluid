@@ -11,11 +11,21 @@ impl Gpu {
     pub async fn new(window: Arc<Window>) -> anyhow::Result<(Self, wgpu::Surface<'static>)> {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
         let surface = instance.create_surface(window)?;
+        let gpu = Self::from_instance(&instance, Some(&surface)).await?;
+        Ok((gpu, surface))
+    }
 
+    #[cfg(test)]
+    pub async fn headless() -> anyhow::Result<Self> {
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
+        Self::from_instance(&instance, None).await
+    }
+
+    async fn from_instance(instance: &wgpu::Instance, surface: Option<&wgpu::Surface<'_>>) -> anyhow::Result<Self> {
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
                 power_preference: wgpu::PowerPreference::HighPerformance,
-                compatible_surface: Some(&surface),
+                compatible_surface: surface,
                 ..Default::default()
             })
             .await?;
@@ -23,12 +33,11 @@ impl Gpu {
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
                 label: Some("device"),
-                required_features: adapter.features() & wgpu::Features::TIMESTAMP_QUERY,
                 required_limits: adapter.limits(),
                 ..Default::default()
             })
             .await?;
 
-        return Ok((Gpu { adapter, device, queue }, surface));
+        Ok(Gpu { adapter, device, queue })
     }
 }
