@@ -1,6 +1,17 @@
 use std::sync::Arc;
 use winit::window::Window;
 
+pub trait GpuMirror {
+    type Gpu: bytemuck::Pod;
+    type Context;
+
+    fn to_gpu(&self, ctx: Self::Context) -> Self::Gpu;
+
+    fn upload(&self, queue: &wgpu::Queue, buffer: &wgpu::Buffer, ctx: Self::Context) {
+        queue.write_buffer(buffer, 0, bytemuck::bytes_of(&self.to_gpu(ctx)));
+    }
+}
+
 pub struct Gpu {
     pub adapter: wgpu::Adapter,
     pub device: wgpu::Device,

@@ -17,7 +17,7 @@ use winit::window::{CursorGrabMode, Window, WindowId};
 
 use crate::camera::Camera;
 use crate::controller::CameraController;
-use crate::fluid::{Fluid, FluidComputePipeline, FluidSettings, SMOOTHING_RADIUS, particle_cube};
+use crate::fluid::{Fluid, FluidComputePipeline, FluidSettings, SMOOTHING_RADIUS, SimulationEnvironment, particle_cube};
 use crate::gpu::Gpu;
 use crate::renderer::Renderer;
 use crate::renderer::fluid::{FluidInstance, FluidMaterial};
@@ -76,11 +76,16 @@ impl State {
         );
         let renderer = Renderer::new(&gpu, surface, window, camera)?;
 
-        let compute = FluidComputePipeline::new(&gpu);
+        let env = SimulationEnvironment {
+            bounds_min: BOUNDS_MIN,
+            bounds_max: BOUNDS_MAX,
+            collision_radius: collision_radius(),
+        };
+
+        let compute = FluidComputePipeline::new(&gpu, env);
 
         let spacing = particle_spacing();
-        let mut particles = particle_cube(spacing, Vec3::new(0.5, 2.5, 0.5), Vec3::ZERO, 30);
-        particles.extend(particle_cube(spacing, Vec3::new(0.8, 5.0, 0.8), Vec3::ZERO, 10));
+        let particles = particle_cube(spacing, Vec3::new(0.5, 2.5, 0.5), Vec3::ZERO, 40);
 
         let fluid = Fluid::new(
             &compute,
@@ -92,14 +97,11 @@ impl State {
                 mass: REST_DENSITY * spacing.powi(3),
                 restitution: RESTITUTION,
                 friction: FRICTION,
-                collision_radius: collision_radius(),
-                bounds_min: BOUNDS_MIN,
-                bounds_max: BOUNDS_MAX,
             },
         );
+
         let fluid_instance = renderer.create_fluid(
-            fluid.particles(),
-            fluid.count(),
+            &fluid,
             FluidMaterial {
                 color: Vec3::new(0.15, 0.45, 0.75),
                 particle_radius: draw_radius(),
@@ -200,7 +202,11 @@ impl App {
             self.accumulator += elapsed;
             let steps = ((self.accumulator / SIM_STEP) as u32).min(self.steps_per_frame);
             for _ in 0..steps {
-                state.compute.step(&state.fluid, &[&state.object], SIM_STEP);
+                state.compute.step(
+                    &mut state.fluid,
+                    &[&state.object],
+                    SIM_STEP,
+                );
             }
             self.accumulator = (self.accumulator - steps as f32 * SIM_STEP).clamp(0.0, SIM_STEP);
         }
@@ -209,6 +215,7 @@ impl App {
             &[&state.floor, &state.object, &state.bounding_box],
             &state.fluid_instance,
             self.shaded,
+            state.fluid.active(),
         );
 
         self.fps_frames += 1;
@@ -251,7 +258,7 @@ impl App {
             KeyCode::KeyC => self.paused = !self.paused,
             KeyCode::KeyT => self.shaded = !self.shaded,
             KeyCode::KeyR => {
-                if let Some(state) = &self.state {
+                if let Some(state) = &mut self.state {
                     state.fluid.reset(&state.gpu.queue);
                 }
                 self.accumulator = 0.0;

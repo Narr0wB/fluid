@@ -7,7 +7,7 @@ use glam::Mat4;
 use wgpu::util::DeviceExt;
 use winit::window::Window;
 
-use crate::camera::Camera;
+use crate::{camera::Camera, fluid::Fluid};
 use crate::gpu;
 
 use fluid::{FluidInstance, FluidMaterial, FluidRenderer};
@@ -287,11 +287,11 @@ impl Renderer {
         self.meshes.model_layout()
     }
 
-    pub fn create_fluid(&self, particles: &wgpu::Buffer, count: u32, material: FluidMaterial) -> FluidInstance {
-        self.fluids.create_instance(&self.device, particles, count, material)
+    pub fn create_fluid(&self, fluid: &Fluid, material: FluidMaterial) -> FluidInstance {
+        self.fluids.create_instance(&self.device, fluid, material)
     }
 
-    pub fn render(&mut self, meshes: &[&Mesh], fluid: &FluidInstance, shaded: bool) {
+    pub fn render(&mut self, meshes: &[&Mesh], fluid: &FluidInstance, shaded: bool, active: usize) {
         let frame = match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(frame) | wgpu::CurrentSurfaceTexture::Suboptimal(frame) => frame,
             wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
@@ -338,7 +338,7 @@ impl Renderer {
             self.meshes.draw(&mut pass, &self.camera_bind_group, meshes);
 
             if !shaded {
-                self.fluids.draw_speed_spheres(&mut pass, &self.camera_bind_group, fluid);
+                self.fluids.draw_speed_spheres(&mut pass, &self.camera_bind_group, fluid, active);
             }
         }
 
@@ -350,6 +350,7 @@ impl Renderer {
             &self.targets.depth_view,
             &self.targets.shaded_color,
             shaded,
+            active
         );
 
         {

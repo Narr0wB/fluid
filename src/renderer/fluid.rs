@@ -1,6 +1,8 @@
 use glam::Vec3;
 use wgpu::util::DeviceExt;
 
+use crate::fluid::Fluid;
+
 use super::{DEPTH_FORMAT, SCENE_COLOR_FORMAT, create_target, fullscreen_pipeline, shader_module};
 
 const LINEAR_DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R32Float;
@@ -21,7 +23,7 @@ struct FluidParams {
 
 pub struct FluidInstance {
     count: u32,
-    bind_group: wgpu::BindGroup,
+    bind_group: [wgpu::BindGroup; 2],
 }
 
 struct BlurChain {
@@ -281,8 +283,7 @@ impl FluidRenderer {
     pub fn create_instance(
         &self,
         device: &wgpu::Device,
-        particles: &wgpu::Buffer,
-        count: u32,
+        fluid: &Fluid,
         material: FluidMaterial,
     ) -> FluidInstance {
         let params = FluidParams {
@@ -294,7 +295,10 @@ impl FluidRenderer {
             contents: bytemuck::bytes_of(&params),
             usage: wgpu::BufferUsages::UNIFORM,
         });
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+
+        let particles = fluid.buffers();
+
+        let bind_group_1 = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("fluid instance"),
             layout: &self.fluid_layout,
             entries: &[
@@ -304,17 +308,33 @@ impl FluidRenderer {
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
-                    resource: particles.as_entire_binding(),
+                    resource: particles[0].as_entire_binding(),
                 },
             ],
         });
-        FluidInstance { count, bind_group }
+
+        let bind_group_2 = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("fluid instance"),
+            layout: &self.fluid_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: params_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: particles[1].as_entire_binding(),
+                },
+            ],
+        });
+
+        FluidInstance { count: fluid.count(), bind_group: [bind_group_1, bind_group_2] }
     }
 
-    pub fn draw_speed_spheres(&self, pass: &mut wgpu::RenderPass<'_>, camera: &wgpu::BindGroup, fluid: &FluidInstance) {
+    pub fn draw_speed_spheres(&self, pass: &mut wgpu::RenderPass<'_>, camera: &wgpu::BindGroup, fluid: &FluidInstance, active: usize) {
         pass.set_pipeline(&self.sphere_pipeline);
         pass.set_bind_group(0, camera, &[]);
-        pass.set_bind_group(1, &fluid.bind_group, &[]);
+        pass.set_bind_group(1, &fluid.bind_group[active], &[]);
         pass.draw(0..6, 0..fluid.count);
     }
 
@@ -328,6 +348,7 @@ impl FluidRenderer {
         scene_depth_view: &wgpu::TextureView,
         output: &wgpu::TextureView,
         draw_fluid: bool,
+        active: usize,
     ) {
         let targets = &self.targets;
 
@@ -340,7 +361,7 @@ impl FluidRenderer {
             if draw_fluid {
                 pass.set_pipeline(&self.thickness_pipeline);
                 pass.set_bind_group(0, camera, &[]);
-                pass.set_bind_group(1, &fluid.bind_group, &[]);
+                pass.set_bind_group(1, &fluid.bind_group[active], &[]);
                 pass.draw(0..6, 0..fluid.count);
             }
         }
@@ -360,22 +381,22 @@ impl FluidRenderer {
             if draw_fluid {
                 pass.set_pipeline(&self.depth_pipeline);
                 pass.set_bind_group(0, camera, &[]);
-                pass.set_bind_group(1, &fluid.bind_group, &[]);
+                pass.set_bind_group(1, &fluid.bind_group[active], &[]);
                 pass.draw(0..6, 0..fluid.count);
             }
         }
 
         if draw_fluid {
             for _ in 0..DEPTH_BLUR_ITERATIONS {
-                self.blur(encoder, camera, fluid, &targets.linear_depth, &self.blur_depth_x, &self.blur_depth_y);
+                self.blur(encoder, camera, fluid, active, &targets.linear_depth, &self.blur_depth_x, &self.blur_depth_y);
             }
-            self.blur(encoder, camera, fluid, &targets.thickness, &self.blur_thickness_x, &self.blur_thickness_y);
+            self.blur(encoder, camera, fluid, active, &targets.thickness, &self.blur_thickness_x, &self.blur_thickness_y);
         }
 
         let mut pass = begin_color_pass(encoder, "fluid composite", output, wgpu::Color::BLACK, None);
         pass.set_pipeline(&self.composite_pipeline);
         pass.set_bind_group(0, camera, &[]);
-        pass.set_bind_group(1, &fluid.bind_group, &[]);
+        pass.set_bind_group(1, &fluid.bind_group[active], &[]);
         pass.set_bind_group(2, &targets.composite_bind_group, &[]);
         pass.draw(0..3, 0..1);
     }
@@ -385,6 +406,7 @@ impl FluidRenderer {
         encoder: &mut wgpu::CommandEncoder,
         camera: &wgpu::BindGroup,
         fluid: &FluidInstance,
+        active: usize,
         chain: &BlurChain,
         horizontal: &wgpu::RenderPipeline,
         vertical: &wgpu::RenderPipeline,
@@ -397,7 +419,7 @@ impl FluidRenderer {
             let mut pass = begin_color_pass(encoder, "fluid blur", target, wgpu::Color::TRANSPARENT, None);
             pass.set_pipeline(pipeline);
             pass.set_bind_group(0, camera, &[]);
-            pass.set_bind_group(1, &fluid.bind_group, &[]);
+            pass.set_bind_group(1, &fluid.bind_group[active], &[]);
             pass.set_bind_group(2, source, &[]);
             pass.draw(0..3, 0..1);
         }

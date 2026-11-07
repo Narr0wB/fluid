@@ -4,7 +4,7 @@
 ![Rust](https://a11ybadges.com/badge?logo=rust)
 
 
-This is a demo of a particle-based fluid simulation using the SPH method. All the rendering and computing is done on the GPU through the wgpu crate. Neighbours are found with an O(N^2) brute-force search and a distance check.
+This is a demo of a particle-based fluid simulation using the SPH method. All the rendering and computing is done on the GPU through the wgpu crate. Neighbours are found with a uniform grid: each step the particles are sorted by cell with a GPU counting sort, so each particle only checks the 27 cells around it.
 
 The fluid collides with triangle meshes loaded from OBJ files, which are baked into signed distance fields. It is drawn with screen-space fluid rendering: smoothed depth, thickness, refraction, absorption, Fresnel reflections and specular highlights.
 
@@ -21,7 +21,7 @@ Without an argument the scene uses `assets/torus.obj`. Collider meshes should be
 
 ![Demo](assets/demo.gif)
 
-28,000 particles falling onto a torus, shown with water shading and then with spheres coloured by speed. The footage was rendered offline at half speed, so it runs faster than the live simulation does. [Full-quality video](assets/demo.mp4).
+64,000 particles falling onto a torus, shown with water shading and then with spheres coloured by speed. The footage was rendered offline at half speed, so it runs faster than the live simulation does. [Full-quality video](assets/demo.mp4) (1920x1080, 60 fps).
 
 ## Controls
 
